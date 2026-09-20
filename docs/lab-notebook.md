@@ -28,3 +28,25 @@ early, risks R1–R12, decisions D1–D7.
 
 **Next:** P0.1 skeleton + packaging + CI scaffold. Zach: answer D5 (Windows
 contact / external TD) and D6 (mirror plan into GitHub issues?).
+
+---
+
+## 2026-09-20 — plan mirrored to GitHub issues
+
+**What ran:** No code. Mirrored `docs/plan.md` into GitHub issues and closed out
+the open decisions.
+
+**Result:**
+
+- Six phase epics (#1 P0, #2 P1, #3 P2, #4 P3, #5 P4, #6 P5) with 46 work items
+  as sub-issues (#7–#52), each carrying the same acceptance criteria as its plan
+  row. Issue types Task and Feature; no milestones, since the repo has none.
+- Plan rows and phase headings now link to their issues.
+- D1–D4 and D6 confirmed as planned. **D5 resolved: there are no external
+  Windows testers to coordinate with.** The afternoon test remains the design
+  bar, but acceptance for P1.8, P1.10, P3.4 and P3.6 is now Windows CI plus a
+  manual Windows run Zach drives, with anything unverified labelled unverified
+  rather than assumed. R11 rewritten accordingly.
+- D7 (does SOG preserve splat order?) stays open until the P1.0 spike.
+
+**Next:** P0.1 — repo skeleton, packaging, CI scaffold (#7).
