@@ -1,0 +1,158 @@
+# CPU CI on Linux, macOS and Windows. The Windows jobs are the ones that keep
+# the technical-director surface honest (handoff §0.1, §5.3); mark "windows"
+# and "td-windows" as required checks in branch protection.
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHONUTF8: "1"
+  PIP_DISABLE_PIP_VERSION_CHECK: "1"
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          python -m pip install uv
+          uv venv -p 3.12 .venv
+          uv pip install --python .venv torch --index-url https://download.pytorch.org/whl/cpu
+          uv pip install --python .venv -e ".[dev]"
+      - name: ruff
+        run: .venv/bin/ruff check . && .venv/bin/ruff format --check .
+      - name: mypy --strict
+        run: .venv/bin/mypy
+      - name: docs markers and bash/PowerShell parity
+        run: .venv/bin/python scripts/ci/run_doc_blocks.py --check
+
+  test:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            torch_index: https://download.pytorch.org/whl/cpu
+          - os: macos-14
+          - os: windows-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        if: runner.os == 'Linux'
+        with:
+          node-version: "22"
+      - name: Install
+        run: |
+          python -m pip install uv
+          uv venv -p 3.12 .venv
+          if [ -n "${{ matrix.torch_index }}" ]; then
+            uv pip install --python .venv torch --index-url "${{ matrix.torch_index }}"
+          fi
+          uv pip install --python .venv -e ".[dev]"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            cygpath -w "$PWD/.venv/Scripts" >> "$GITHUB_PATH"
+          else
+            echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+          fi
+      - name: gsplat reference functions (Linux only; pure PyTorch, no CUDA)
+        if: runner.os == 'Linux'
+        run: uv pip install --python .venv "gsplat==1.5.3"
+      - name: msplat import smoke (Apple Silicon only)
+        if: runner.os == 'macOS'
+        run: |
+          uv pip install --python .venv "msplat>=1.1.4"
+          python -c "import msplat; print('msplat', getattr(msplat, '__version__', 'unknown'))"
+      - name: pytest
+        env:
+          PSPLAT_INTEROP: ${{ runner.os == 'Linux' && '1' || '0' }}
+        run: pytest -m "not slow"
+
+  # The afternoon test, as literally as CI allows: a clean Windows machine,
+  # stock Windows PowerShell 5.1, plain venv and pip (no uv), the built wheel,
+  # then every PowerShell block in the TD-facing docs, run as written.
+  # GitHub prepends $ErrorActionPreference = 'stop' to powershell steps, which
+  # can turn a native tool's harmless stderr into a failure under Windows
+  # PowerShell 5.1. Each step resets it and checks exit codes explicitly.
+  td-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python -m pip install build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m build --wheel --outdir dist
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Check the wheel is pure Python
+        shell: powershell
+        run: |
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
+          if ($wheel.Name -notlike "*-py3-none-any.whl") { throw "not a pure wheel: $($wheel.Name)" }
+          # Out-File -Encoding utf8 in PowerShell 5.1 writes a BOM, which would
+          # corrupt the variable name; write UTF-8 without one.
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "PSPLAT_DOCS_WHEEL=$($wheel.FullName)`n", [Text.UTF8Encoding]::new($false))
+      - name: Clean venv, install the wheel, run the CLI on the fixture
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python -m venv $env:RUNNER_TEMP\tdvenv
+          & $env:RUNNER_TEMP\tdvenv\Scripts\python.exe -m pip install $env:PSPLAT_DOCS_WHEEL
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $psplat = "$env:RUNNER_TEMP\tdvenv\Scripts\psplat.exe"
+          & $psplat --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $psplat cameras tests\fixtures\colmap_tiny\txt --out $env:RUNNER_TEMP\cams_colmap.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $psplat analyze tests\fixtures\synthetic\scene.ply --cameras tests\fixtures\synthetic\cams.json --backend torch --views all --out $env:RUNNER_TEMP\fixture.weights.npz
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path $env:RUNNER_TEMP\fixture.weights.npz)) { throw "no weights written" }
+      - name: Run the TD docs' PowerShell blocks literally
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python scripts\ci\run_doc_blocks.py --run powershell
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  # The same docs' bash blocks, for Mac and Linux readers.
+  td-bash:
+    runs-on: ubuntu-latest
+    env:
+      # PyPI's Linux PyTorch is the multi-gigabyte CUDA build; the docs' plain
+      # `pip install` picks the CPU build from this index instead.
+      PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cpu
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Build wheel
+        run: |
+          python -m pip install build
+          python -m build --wheel --outdir dist
+          echo "PSPLAT_DOCS_WHEEL=$(ls $PWD/dist/*.whl)" >> "$GITHUB_ENV"
+      - name: Run the TD docs' bash blocks literally
+        run: python scripts/ci/run_doc_blocks.py --run bash

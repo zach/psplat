@@ -1,0 +1,29 @@
+# GPU checks on the self-hosted AWS box (handoff §5.4). Manual only, so it
+# never queues forever when no runner is registered. Register the box as a
+# self-hosted runner with the labels below, then run this from the Actions tab.
+name: cuda
+
+on:
+  workflow_dispatch:
+    inputs:
+      gsplat_ref:
+        description: gsplat git ref to install (pin a SHA for reproducible runs)
+        default: main
+
+jobs:
+  cuda:
+    runs-on: [self-hosted, linux, x64, gpu]
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: GPU
+        run: nvidia-smi
+      - name: Install
+        run: |
+          uv venv -p 3.12 .venv
+          uv pip install --python .venv torch torchvision --index-url https://download.pytorch.org/whl/cu128
+          uv pip install --python .venv "git+https://github.com/nerfstudio-project/gsplat.git@${{ inputs.gsplat_ref }}"
+          uv pip install --python .venv -e ".[dev]"
+          .venv/bin/python -c "import gsplat, torch; print('gsplat', gsplat.__version__, 'torch', torch.__version__, 'cuda', torch.version.cuda, torch.cuda.get_device_name(0))"
+      - name: pytest (includes GPU-only tests as they land)
+        run: .venv/bin/pytest -m "not slow"
