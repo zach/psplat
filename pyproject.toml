@@ -1,0 +1,94 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "psplat"
+dynamic = ["version"]
+description = "Perceptual, budget-scalable Gaussian splats: analyse once, truncate anywhere."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "THIRD_PARTY.md"]
+requires-python = ">=3.12"
+authors = [{ name = "Zach Baker" }]
+keywords = ["gaussian splatting", "3dgs", "level of detail", "perception", "compression"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "Intended Audience :: Science/Research",
+  "Operating System :: Microsoft :: Windows",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.12",
+  "Programming Language :: Python :: 3.13",
+  "Topic :: Multimedia :: Graphics :: 3D Rendering",
+]
+# Pure-Python wheel. torch is a core dependency, not an extra, because
+# `analyze --backend torch` must work from a plain `pip install psplat`
+# on a stock Windows machine (handoff §3.5, §5.3). Modules that do not
+# need it import it lazily, so `order` and `pack` stay fast to start.
+dependencies = [
+  "numpy>=2.0",
+  "torch>=2.4",
+  "typer>=0.12",
+  "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+# gsplat pin lands with P1.10 (#29): one Python/Torch/CUDA triple from
+# gsplat's wheel index. Left empty until that triple is tested.
+cuda = []
+msplat = ["msplat>=1.1.4; sys_platform == 'darwin' and platform_machine == 'arm64'"]
+# ColorVideoVDP is added only after its licence is checked (#25).
+cvvdp = []
+# AWS access goes through the AWS CLI in scripts/; the extra is reserved
+# so `pip install -e ".[dev,aws]"` in the bootstrap stays stable.
+aws = []
+dev = [
+  "pytest>=8",
+  "ruff>=0.6",
+  "mypy>=1.11",
+  "types-PyYAML",
+]
+
+[project.scripts]
+psplat = "psplat.cli:app"
+
+[project.urls]
+Homepage = "https://github.com/zach/psplat"
+Issues = "https://github.com/zach/psplat/issues"
+
+[tool.hatch.version]
+path = "psplat/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["psplat"]
+
+[tool.hatch.build.targets.sdist]
+include = ["psplat", "tests", "docs", "scripts", "README.md", "LICENSE", "THIRD_PARTY.md"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF", "NPY", "PTH"]
+ignore = [
+  "RUF001", # ambiguous unicode in strings: we use σ, ꟻLIP, × on purpose
+  "RUF002",
+  "RUF003",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"psplat/cli.py" = ["B008"] # typer's idiom puts Option() in defaults
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["psplat"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+markers = [
+  "slow: long-running; excluded from the default CI run with -m 'not slow'",
+]
