@@ -1,4 +1,4 @@
-<!-- psplat-docs: audience=td -->
+<!-- psplat-docs: audience=dev -->
 # Testing
 
 The whole test suite runs on a CPU in a few seconds, on Windows, macOS and
