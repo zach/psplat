@@ -27,8 +27,11 @@ hoped for. It is the guaranteed path and the oracle; gsplat is the fast one.
 
 from __future__ import annotations
 
+import functools
 import math
+import os
 import time
+import warnings
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -59,11 +62,33 @@ TILE = 16
 CHUNK = 256
 
 
+def _usable(device: str) -> bool:
+    """Whether a small computation actually runs on ``device``.
+
+    ``is_available()`` is not enough: GitHub's macOS runners report MPS as
+    available, then fail every allocation with "MPS backend out of memory".
+    """
+    try:
+        x = torch.ones(4096, device=device)
+        return float((x * 2).sum().item()) == 8192.0
+    except RuntimeError as exc:
+        first = str(exc).splitlines()[0] if str(exc) else type(exc).__name__
+        warnings.warn(
+            f"{device} reports available but is unusable ({first}); skipping it", stacklevel=3
+        )
+        return False
+
+
+@functools.cache
 def default_device() -> torch.device:
-    if torch.cuda.is_available():
+    """``PSPLAT_DEVICE`` if set, else CUDA, else Apple MPS, else CPU, whichever works."""
+    forced = os.environ.get("PSPLAT_DEVICE")
+    if forced:
+        return torch.device(forced)
+    if torch.cuda.is_available() and _usable("cuda"):
         return torch.device("cuda")
     mps = getattr(torch.backends, "mps", None)
-    if mps is not None and mps.is_available():
+    if mps is not None and mps.is_available() and _usable("mps"):
         return torch.device("mps")
     return torch.device("cpu")
 

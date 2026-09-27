@@ -227,3 +227,34 @@ def test_empty_view_and_empty_scene() -> None:
     empty = random_scene(0, 0)
     assert oracle.contributions(empty, [camera()]).shape == (0, 1)
     assert oracle.render(empty, camera()).image.sum() == 0
+
+
+def test_default_device_skips_a_device_that_fails_in_practice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # GitHub's macOS runners report MPS as available and then fail every
+    # allocation; automatic selection must fall back to the CPU.
+    monkeypatch.delenv("PSPLAT_DEVICE", raising=False)
+    tb.default_device.cache_clear()
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: True)
+
+    def broken(*args: object, **kwargs: object) -> torch.Tensor:
+        if kwargs.get("device") == "cuda":
+            raise RuntimeError("CUDA error: out of memory")
+        return torch.zeros(*args)  # type: ignore[call-overload,no-any-return]
+
+    monkeypatch.setattr(tb.torch, "ones", broken)
+    with pytest.warns(UserWarning, match="unusable"):
+        assert tb._usable("cuda") is False
+    with pytest.warns(UserWarning, match="unusable"):
+        # MPS may be chosen instead on a Mac with a working GPU; never CUDA.
+        assert tb.default_device().type != "cuda"
+    tb.default_device.cache_clear()
+
+
+def test_psplat_device_overrides_automatic_choice(monkeypatch: pytest.MonkeyPatch) -> None:
+    tb.default_device.cache_clear()
+    monkeypatch.setenv("PSPLAT_DEVICE", "cpu")
+    assert tb.default_device() == torch.device("cpu")
+    assert TorchRenderer().describe() == "torch on cpu"
+    tb.default_device.cache_clear()

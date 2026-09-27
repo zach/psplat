@@ -24,9 +24,10 @@ Defined in `psplat/render/base.py`. Arrays cross it as NumPy.
 ```python
 class Renderer(Protocol):
     name: str
+
     def describe(self) -> str: ...
-    def render(self, scene, camera) -> RenderResult: ...        # (H, W, 3) image, (H, W) alpha
-    def contributions(self, scene, cameras, progress=None): ... # (N, V) float32
+    def render(self, scene, camera) -> RenderResult: ...  # (H, W, 3) image, (H, W) alpha
+    def contributions(self, scene, cameras, progress=None): ...  # (N, V) float32
     def estimate_seconds(self, scene, cameras) -> float | None: ...
 ```
 

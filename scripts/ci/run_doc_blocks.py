@@ -32,6 +32,8 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import os
 import re
 import shutil
@@ -189,7 +191,7 @@ def powershell_script(code: str) -> str:
 
 
 def run(doc: Doc, shell: str, wheel: str | None) -> bool:
-    rel = doc.path.relative_to(REPO)
+    rel = doc.path.name if not doc.path.is_relative_to(REPO) else doc.path.relative_to(REPO)
     blocks = [b for b in doc.blocks if b.lang == shell and not b.skip]
     if not blocks:
         return True
@@ -217,12 +219,46 @@ def run(doc: Doc, shell: str, wheel: str | None) -> bool:
     return ok
 
 
+SELFTEST = {
+    # name: (shell, code, should_pass)
+    "native-ok": ("both", 'python -c "print(1)"\npython -c "print(2)"', True),
+    "native-fails-mid": (
+        "both",
+        'python -c "print(1)"\npython -c "import sys; sys.exit(3)"\npython -c "print(3)"',
+        False,
+    ),
+    "stderr-is-harmless": ("both", "python -c \"import sys; sys.stderr.write('warn\\\\n')\"", True),
+    "cmdlet-fails": ("powershell", 'Get-Item does-not-exist-psplat\npython -c "print(1)"', False),
+    "missing-command": ("both", 'no-such-command-psplat\npython -c "print(1)"', False),
+}
+
+
+def selftest(shell: str) -> int:
+    """Prove the wrapper fails when a line fails, so a green doc run means something."""
+    failures = 0
+    for name, (which, code, should_pass) in SELFTEST.items():
+        if which not in ("both", shell):
+            continue
+        doc = Doc(REPO / f"selftest-{name}.md", "td", [Block(shell, code, 1, False)])
+        with contextlib.redirect_stdout(io.StringIO()):
+            ok = run(doc, shell, None)
+        verdict = "as expected" if ok == should_pass else "WRONG"
+        failures += ok != should_pass
+        print(f"selftest {name}: {'passed' if ok else 'failed'} ({verdict})")
+    return 1 if failures else 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--check", action="store_true", help="check markers and parity only")
     group.add_argument("--run", choices=["bash", "powershell"], help="execute td documents")
+    group.add_argument(
+        "--selftest", choices=["bash", "powershell"], help="check the wrapper catches failures"
+    )
     args = parser.parse_args()
+    if args.selftest:
+        return selftest(args.selftest)
 
     docs = [parse(p) for p in documents()]
     problems = [p for d in docs for p in check(d)]

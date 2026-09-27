@@ -20,8 +20,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Install
@@ -52,11 +52,11 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         if: runner.os == 'Linux'
         with:
           node-version: "22"
@@ -95,8 +95,8 @@ jobs:
   td-windows:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Build wheel
@@ -130,6 +130,12 @@ jobs:
           & $psplat analyze tests\fixtures\synthetic\scene.ply --cameras tests\fixtures\synthetic\cams.json --backend torch --views all --out $env:RUNNER_TEMP\fixture.weights.npz
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path $env:RUNNER_TEMP\fixture.weights.npz)) { throw "no weights written" }
+      - name: Check the doc runner catches failures under PowerShell 5.1
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          python scripts\ci\run_doc_blocks.py --selftest powershell
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run the TD docs' PowerShell blocks literally
         shell: powershell
         run: |
@@ -145,8 +151,8 @@ jobs:
       # `pip install` picks the CPU build from this index instead.
       PIP_EXTRA_INDEX_URL: https://download.pytorch.org/whl/cpu
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
       - name: Build wheel
@@ -154,5 +160,7 @@ jobs:
           python -m pip install build
           python -m build --wheel --outdir dist
           echo "PSPLAT_DOCS_WHEEL=$(ls $PWD/dist/*.whl)" >> "$GITHUB_ENV"
+      - name: Check the doc runner catches failures under bash
+        run: python scripts/ci/run_doc_blocks.py --selftest bash
       - name: Run the TD docs' bash blocks literally
         run: python scripts/ci/run_doc_blocks.py --run bash
