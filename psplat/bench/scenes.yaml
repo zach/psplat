@@ -1,0 +1,78 @@
+# psplat scene registry (handoff §4.1). Datasets are fetched by script and
+# never redistributed; the licence notes say why.
+#
+# "verified" records when a URL was last seen serving the stated size.
+
+archives:
+  mipnerf360:
+    url: http://storage.googleapis.com/gresearch/refraw360/360_v2.zip
+    bytes: 12535427936
+    verified: "2026-09-27"
+    licence: research use; fetch, do not redistribute
+  mipnerf360-extra:
+    url: http://storage.googleapis.com/gresearch/refraw360/360_extra_scenes.zip
+    bytes: 4488140217
+    verified: "2026-09-27"
+    licence: research use; fetch, do not redistribute
+  tandt_db:
+    # The 3DGS authors' preprocessed Tanks and Temples plus Deep Blending.
+    url: https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/datasets/input/tandt_db.zip
+    bytes: null
+    verified: null  # returned HTTP 403 to the dev container on 2026-09-27; check from the Mac
+    licence: research use; fetch, do not redistribute
+
+sets:
+  mipnerf360-core: [garden, bicycle, counter, room]
+  mipnerf360-rest: [bonsai, kitchen, stump, flowers, treehill]
+  tanks-temples: [truck, train]
+  deep-blending: [drjohnson, playroom]
+  e2: [garden, bicycle, counter, room, truck, train]
+
+# path: folder inside the extracted archive.
+# data_factor: image downscale used for training and evaluation. The 3DGS and
+# gsplat convention is images_4 for outdoor and images_2 for indoor
+# Mip-NeRF 360 scenes, and full resolution for Tanks and Temples and Deep
+# Blending as preprocessed by the 3DGS authors.
+scenes:
+  garden: {archive: mipnerf360, path: garden, data_factor: 4}
+  bicycle: {archive: mipnerf360, path: bicycle, data_factor: 4}
+  stump: {archive: mipnerf360, path: stump, data_factor: 4}
+  counter: {archive: mipnerf360, path: counter, data_factor: 2}
+  room: {archive: mipnerf360, path: room, data_factor: 2}
+  bonsai: {archive: mipnerf360, path: bonsai, data_factor: 2}
+  kitchen: {archive: mipnerf360, path: kitchen, data_factor: 2}
+  flowers: {archive: mipnerf360-extra, path: flowers, data_factor: 4}
+  treehill: {archive: mipnerf360-extra, path: treehill, data_factor: 4}
+  truck: {archive: tandt_db, path: tandt/truck, data_factor: 1}
+  train: {archive: tandt_db, path: tandt/train, data_factor: 1}
+  drjohnson: {archive: tandt_db, path: db/drjohnson, data_factor: 1}
+  playroom: {archive: tandt_db, path: db/playroom, data_factor: 1}
+
+# Training recipes. gsplat recipes run examples/simple_trainer.py from a
+# gsplat checkout (the bootstrap clones one to ~/gsplat); every flag listed
+# here is checked against that script's --help before a run starts, so a
+# renamed flag fails in seconds instead of after an hour of GPU time.
+trainers:
+  gsplat-mcmc-1m:
+    kind: gsplat
+    strategy: mcmc
+    steps: 30000
+    args: ["--strategy.cap-max", "1000000"]
+  gsplat-mcmc-3m:
+    kind: gsplat
+    strategy: mcmc
+    steps: 30000
+    args: ["--strategy.cap-max", "3000000"]
+  msplat-7k:
+    kind: msplat
+    steps: 7000
+  msplat-30k:
+    kind: msplat
+    steps: 30000
+
+# Published numbers E0 must reproduce: PSNR within 0.3 dB and SSIM within
+# 0.02 (handoff §2.2). Deliberately empty until copied from a citable
+# source; gsplat's benchmark page (docs.gsplat.studio/main/tests/eval.html)
+# was unreachable from the dev container. Fill as:
+#   gsplat-mcmc-1m: {source: <url>, gsplat: <version>, scenes: {garden: {psnr: .., ssim: ..}}}
+reference: {}

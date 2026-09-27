@@ -42,9 +42,69 @@ aws s3 sync "s3://$PSPLAT_BUCKET/" ~/psplat-data/ --exclude "*/renders/*"
 
 ## AWS
 
-The GPU box is provisioned and bootstrapped by the scripts in `scripts/`;
-see [P0.10](https://github.com/zach/psplat/issues/16). Record the versions
-the bootstrap reports in the table below after the first run.
+The GPU box is provisioned and bootstrapped by the scripts in `scripts/`
+([P0.10](https://github.com/zach/psplat/issues/16)). From the Mac:
+
+```bash
+export PSPLAT_ALERT_EMAIL=you@example.com   # optional monthly budget alarm
+scripts/aws_provision.sh                    # asks before launching; bills hourly
+aws ssm start-session --target <instance-id>
+```
+
+Then on the instance:
+
+```bash
+git clone https://github.com/zach/psplat ~/psplat
+PSPLAT_GSPLAT_REF=<sha> ~/psplat/scripts/aws_bootstrap.sh
+```
+
+Pin `PSPLAT_GSPLAT_REF` to a commit for reproducible runs. The bootstrap
+prints the versions it installed; record them in the table below. The
+instance stops itself after 45 idle minutes.
+
+## E0: reproduce the baseline
+
+E0 ([P0.11](https://github.com/zach/psplat/issues/17)) trains the four
+Mip-NeRF 360 core scenes and checks them against published gsplat numbers:
+PSNR within 0.3 dB and SSIM within 0.02. Wall clock is roughly 1–2 GPU-hours
+per scene.
+
+On the AWS box:
+
+```bash
+source ~/.venvs/psplat/bin/activate
+psplat bench fetch mipnerf360-core --dest ~/data --s3-bucket "$PSPLAT_BUCKET"
+for scene in garden bicycle counter room; do
+  psplat bench train "$scene" --trainer gsplat-mcmc-1m \
+    --data ~/data/raw/mipnerf360/$scene --out ~/trained
+done
+psplat bench e0 ~/trained
+```
+
+`bench train --dry-run` prints the exact `simple_trainer.py` command. Before
+a real run it checks every flag against the installed trainer's `--help`,
+so a renamed flag fails immediately rather than after an hour.
+
+Each run folder holds `scene.ply`, `cams.json` in the same normalised world
+frame gsplat trained in, `metrics.json`, `run.json` and the raw trainer
+output. Push them with `scripts/s3_sync.sh push-trained`.
+
+`bench e0` reports "no reference" until the published numbers are copied
+into `reference:` in `psplat/bench/scenes.yaml`, with their source URL. They
+were not recorded from memory: gsplat's benchmark page was unreachable from
+the development container.
+
+On the Mac, the msplat path is:
+
+```bash
+psplat bench fetch garden --dest ~/psplat-data
+psplat bench train garden --trainer msplat-7k \
+  --data ~/psplat-data/raw/mipnerf360/garden --out ~/psplat-data/trained
+```
+
+msplat does not document whether it renormalises the scene, so its
+`cams.json` comes from the raw COLMAP model. On the first run, check that
+`scene.ply` and `cams.json` line up before trusting later numbers.
 
 ## Recorded versions
 

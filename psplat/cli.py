@@ -162,10 +162,106 @@ def eval_() -> None:
     _not_yet("eval", 25)
 
 
-@app.command(context_settings=_STUB)
-def bench() -> None:
-    """Run experiments end to end over the scene registry."""
-    _not_yet("bench", 28)
+bench_app = typer.Typer(
+    help="Datasets, training and experiments over the scene registry.", no_args_is_help=True
+)
+app.add_typer(bench_app, name="bench")
+
+
+@bench_app.command("scenes")
+def bench_scenes() -> None:
+    """List the registry: sets, scenes and where their data comes from."""
+    from psplat.bench.registry import load_registry
+
+    reg = load_registry()
+    for name, members in reg.sets.items():
+        typer.echo(f"{name}: {', '.join(members)}")
+    typer.echo("")
+    for scene in reg.scenes.values():
+        archive = reg.archives[scene.archive]
+        checked = f"verified {archive.verified}" if archive.verified else "URL not verified"
+        where = f"{scene.archive}/{scene.path}"
+        typer.echo(f"{scene.name:10s} {where:26s} factor {scene.data_factor}  ({checked})")
+    typer.echo("")
+    typer.echo("trainers: " + ", ".join(reg.trainers))
+
+
+@bench_app.command("fetch")
+def bench_fetch(
+    names: list[str] = typer.Argument(..., help="Scene or set names, e.g. mipnerf360-core."),
+    dest: Path = typer.Option(Path("data"), help="Local data root; scenes go to DEST/raw/."),
+    s3_bucket: str | None = typer.Option(None, help="Also sync each scene to s3://BUCKET/raw/."),
+) -> None:
+    """Download datasets and extract the requested scenes (idempotent)."""
+    from psplat.bench.fetch import FetchError, fetch
+    from psplat.bench.registry import RegistryError, load_registry
+
+    try:
+        fetch(load_registry(), names, dest, s3_bucket=s3_bucket, log=typer.echo)
+    except (FetchError, RegistryError, OSError) as exc:
+        _fail(str(exc))
+
+
+@bench_app.command("train")
+def bench_train(
+    scene: str = typer.Argument(..., help="Scene name from the registry."),
+    trainer: str = typer.Option("gsplat-mcmc-1m", help="Recipe from the registry."),
+    data: Path = typer.Option(..., help="The scene's dataset folder (images + sparse/0)."),
+    out: Path = typer.Option(Path("trained"), help="Output root."),
+    gsplat_examples: Path = typer.Option(
+        Path.home() / "gsplat" / "examples", help="gsplat checkout's examples folder."
+    ),
+    dry_run: bool = typer.Option(False, help="Print the command and stop."),
+) -> None:
+    """Train one scene with a registry recipe (E0); writes PLY, cameras, metrics, run.json."""
+    from psplat.bench.registry import RegistryError, load_registry
+    from psplat.bench.train import TrainError, train_gsplat, train_msplat
+
+    try:
+        reg = load_registry()
+        entry, recipe = reg.scene(scene), reg.trainer(trainer)
+        if recipe.kind == "gsplat":
+            train_gsplat(recipe, entry, data, out, gsplat_examples, dry_run=dry_run, log=typer.echo)
+        else:
+            train_msplat(recipe, entry, data, out, dry_run=dry_run, log=typer.echo)
+    except (RegistryError, TrainError, OSError) as exc:
+        _fail(str(exc))
+
+
+@bench_app.command("e0")
+def bench_e0(
+    trained: Path = typer.Argument(Path("trained"), help="Root written by bench train."),
+) -> None:
+    """Compare trained scenes' metrics with the published numbers in the registry."""
+    import json
+
+    from psplat.bench.registry import load_registry
+    from psplat.bench.train import compare_to_reference
+
+    results = []
+    for run_json in sorted(trained.glob("*/*/*/run.json")):
+        run = json.loads(run_json.read_text(encoding="utf-8"))
+        m = run.get("metrics", {})
+        if "psnr" in m and "ssim" in m:
+            results.append({"scene": run["scene"], "trainer": run["trainer"]["name"],
+                            "psnr": float(m["psnr"]), "ssim": float(m["ssim"])})  # fmt: skip
+    if not results:
+        _fail(f"no trained runs with metrics under {trained}")
+    for row in compare_to_reference(results, load_registry().reference):
+        ref = (
+            f"ref {row['ref_psnr']:.2f} / {row['ref_ssim']:.3f}" if row["ref_psnr"] is not None
+            else "ref -"
+        )  # fmt: skip
+        typer.echo(
+            f"{row['scene']:10s} {row['trainer']:16s} PSNR {row['psnr']:.2f}  "
+            f"SSIM {row['ssim']:.3f}  {ref}  {row['status']}"
+        )
+
+
+@bench_app.command("run", context_settings=_STUB)
+def bench_run() -> None:
+    """Run analyse, order, pack and eval over scenes and orderings (E1, E2)."""
+    _not_yet("bench run", 28)
 
 
 @app.command(context_settings=_STUB)
