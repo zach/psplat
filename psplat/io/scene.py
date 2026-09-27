@@ -40,6 +40,7 @@ class PlyLayout:
 
     properties: tuple[tuple[str, str], ...]
     comments: tuple[str, ...] = ()
+    obj_info: tuple[str, ...] = ()
 
 
 @dataclass
