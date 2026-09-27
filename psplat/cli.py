@@ -7,6 +7,8 @@ whole v0.1 surface; each stub names the issue that tracks it.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import typer
 
 from psplat import __version__
@@ -98,3 +100,34 @@ def study() -> None:
 def viewer() -> None:
     """Open the web viewer with a budget slider."""
     _not_yet("viewer", 26)
+
+
+@app.command()
+def cameras(
+    source: Path = typer.Argument(
+        ..., help="COLMAP model or dataset directory, transforms.json, or cams.json."
+    ),
+    out: Path = typer.Option(Path("cams.json"), "--out", "-o", help="Where to write cams.json."),
+    downscale: float = typer.Option(
+        1.0, help="Divide image size by this, e.g. 4 for Mip-NeRF 360 images_4."
+    ),
+    holdout: int = typer.Option(
+        8, help="Mark every Nth view (by name) as eval; 0 marks all views train."
+    ),
+    allow_distortion: bool = typer.Option(
+        False, help="Ignore lens distortion instead of refusing distorted cameras."
+    ),
+) -> None:
+    """Convert COLMAP or nerfstudio cameras to psplat's cams.json."""
+    from psplat.io.cameras import CameraFormatError, load_cameras, write_cameras
+
+    try:
+        cams = load_cameras(source, allow_distortion=allow_distortion, holdout_every=holdout)
+    except CameraFormatError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(code=1) from None
+    if downscale != 1.0:
+        cams = [cam.downscaled(downscale) for cam in cams]
+    write_cameras(cams, out)
+    n_eval = sum(cam.split == "eval" for cam in cams)
+    typer.echo(f"wrote {len(cams)} views ({len(cams) - n_eval} train, {n_eval} eval) to {out}")
