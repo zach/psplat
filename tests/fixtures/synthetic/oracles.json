@@ -1,0 +1,28 @@
+{
+  "offscreen": {
+    "splats": [
+      188,
+      189,
+      190,
+      191,
+      192
+    ],
+    "views": "all"
+  },
+  "occluded": {
+    "splat": 193,
+    "occluders": [
+      194,
+      195,
+      196,
+      197
+    ],
+    "hidden_in": "view_01",
+    "visible_in": "view_05"
+  },
+  "overlap": {
+    "front": 198,
+    "back": 199,
+    "view": "view_02"
+  }
+}
