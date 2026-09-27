@@ -8,6 +8,7 @@ whole v0.1 surface; each stub names the issue that tracks it.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import NoReturn
 
 import typer
 
@@ -48,10 +49,93 @@ def main(
     """psplat command-line interface."""
 
 
-@app.command(context_settings=_STUB)
-def analyze() -> None:
+def _fail(message: str) -> NoReturn:
+    typer.echo(f"error: {message}", err=True)
+    raise typer.Exit(code=1)
+
+
+def _duration(seconds: float) -> str:
+    if seconds < 60:
+        return "under a minute"
+    if seconds < 3600:
+        return f"about {round(seconds / 60)} min"
+    return f"about {seconds / 3600:.1f} h"
+
+
+@app.command()
+def analyze(
+    scene_path: Path = typer.Argument(..., metavar="SCENE.PLY", help="Trained splat scene."),
+    cameras: Path = typer.Option(
+        ..., "--cameras", "-c", help="cams.json, a COLMAP model directory, or transforms.json."
+    ),
+    backend: str = typer.Option(
+        "auto", help="auto, torch, gsplat, msplat or null. auto picks the fastest available."
+    ),
+    views: str = typer.Option(
+        "train", help="train, eval, all, or a number of evenly spaced views."
+    ),
+    terms: str = typer.Option("contribution", help="Comma-separated analysis terms."),
+    out: Path | None = typer.Option(
+        None, "--out", "-o", help="Output file. Default: SCENE.weights.npz next to the scene."
+    ),
+    device: str | None = typer.Option(None, help="Torch device: cpu, cuda or mps. Default: best."),
+) -> None:
     """Per-splat analysis over a camera set; writes scene.weights.npz."""
-    _not_yet("analyze", 13)
+    from psplat.analyze.contribution import TermUnavailable, check_terms
+    from psplat.analyze.contribution import analyze as run_analysis
+    from psplat.io.cameras import CameraFormatError, load_cameras, select_views
+    from psplat.io.ply import PlyFormatError, read_ply
+    from psplat.provenance import collect, sha256_file
+    from psplat.render.base import BackendUnavailable
+    from psplat.render.registry import get_backend, select_backend
+
+    try:
+        term_list = check_terms(terms.split(","))
+        scene = read_ply(scene_path)
+        all_cams = load_cameras(cameras)
+        chosen = select_views(all_cams, views)
+    except (TermUnavailable, PlyFormatError, CameraFormatError, ValueError, OSError) as exc:
+        _fail(str(exc))
+    if not chosen:
+        _fail(f"--views {views} selects no cameras from {cameras}")
+
+    try:
+        if backend == "auto":
+            selection = select_backend(device=device)
+            renderer, reason = selection.renderer, selection.reason
+        else:
+            renderer, reason = get_backend(backend, device=device), "requested"
+        estimate = renderer.estimate_seconds(scene, chosen)
+    except BackendUnavailable as exc:
+        _fail(str(exc))
+
+    size = f"{chosen[0].width}x{chosen[0].height}"
+    when = f"; {_duration(estimate)}" if estimate is not None else ""
+    typer.echo(
+        f"backend: {renderer.describe()} ({reason}); "
+        f"{scene.count:,} splats x {len(chosen)} views at {size}{when}",
+        err=True,
+    )
+
+    step = max(1, len(chosen) // 10)
+
+    def progress(done: int, total: int) -> None:
+        if done == total or done % step == 0:
+            typer.echo(f"  view {done}/{total}", err=True)
+
+    target = out or scene_path.with_name(scene_path.stem + ".weights.npz")
+    provenance = collect(
+        command="analyze",
+        args={"scene": str(scene_path), "cameras": str(cameras), "backend": backend,
+              "views": views, "terms": term_list, "device": device},
+        source={"ply": scene_path.name, "sha256": sha256_file(scene_path)},
+    )  # fmt: skip
+    try:
+        weights = run_analysis(scene, chosen, renderer, term_list, progress, provenance)
+    except BackendUnavailable as exc:
+        _fail(str(exc))
+    weights.save(target)
+    typer.echo(f"wrote {target} ({weights.meta['wall_seconds']:.1f} s)")
 
 
 @app.command(context_settings=_STUB)

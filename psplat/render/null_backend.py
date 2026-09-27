@@ -14,7 +14,7 @@ from numpy.typing import NDArray
 
 from psplat.io.cameras import Camera
 from psplat.io.scene import Scene
-from psplat.render.base import BackendUnavailable, RenderResult
+from psplat.render.base import BackendUnavailable, ProgressFn, RenderResult
 
 MESSAGE = (
     "the null backend cannot render. It is for working with files that were "
@@ -32,7 +32,12 @@ class NullRenderer:
     def render(self, scene: Scene, camera: Camera) -> RenderResult:
         raise BackendUnavailable(MESSAGE)
 
-    def contributions(self, scene: Scene, cameras: Sequence[Camera]) -> NDArray[np.float32]:
+    def contributions(
+        self,
+        scene: Scene,
+        cameras: Sequence[Camera],
+        progress: ProgressFn | None = None,
+    ) -> NDArray[np.float32]:
         raise BackendUnavailable(MESSAGE)
 
     def estimate_seconds(self, scene: Scene, cameras: Sequence[Camera]) -> float | None:

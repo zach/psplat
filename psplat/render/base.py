@@ -14,7 +14,7 @@ not from backends, so they mean the same thing whichever backend ran.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
@@ -23,6 +23,9 @@ from numpy.typing import NDArray
 
 from psplat.io.cameras import Camera
 from psplat.io.scene import Scene
+
+# Called as progress(views_done, views_total) after each view.
+ProgressFn = Callable[[int, int], None]
 
 
 class BackendUnavailable(RuntimeError):
@@ -45,7 +48,12 @@ class Renderer(Protocol):
 
     def render(self, scene: Scene, camera: Camera) -> RenderResult: ...
 
-    def contributions(self, scene: Scene, cameras: Sequence[Camera]) -> NDArray[np.float32]:
+    def contributions(
+        self,
+        scene: Scene,
+        cameras: Sequence[Camera],
+        progress: ProgressFn | None = None,
+    ) -> NDArray[np.float32]:
         """``(N, V)`` float32 rendering contribution of each splat to each view."""
         ...
 

@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import math
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import numpy as np
@@ -39,7 +39,7 @@ from torch import Tensor
 
 from psplat.io.cameras import Camera
 from psplat.io.scene import Scene
-from psplat.render.base import RenderResult
+from psplat.render.base import ProgressFn, RenderResult
 from psplat.render.project import (
     ALPHA_MAX,
     T_MIN,
@@ -57,8 +57,6 @@ TILE = 16
 # CPU: 256 was fastest for both an opaque surface (3.2 s vs 13.5 s at 4096)
 # and translucent clutter (5.8 s vs 7.1 s).
 CHUNK = 256
-
-ProgressFn = Callable[[int, int], None]
 
 
 def default_device() -> torch.device:
