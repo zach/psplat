@@ -50,3 +50,70 @@ the open decisions.
 - D7 (does SOG preserve splat order?) stays open until the P1.0 spike.
 
 **Next:** P0.1 — repo skeleton, packaging, CI scaffold (#7).
+
+---
+
+## 2026-09-27 — P0 built
+
+**What ran:** P0.1–P0.11 implemented in the remote container (Linux, 4 CPU
+threads, no GPU) and pushed; CI on GitHub Actions. Commits on
+`claude/upbeat-knuth-u1xp0b`, one per item.
+
+**Results:**
+
+- 117 tests pass locally and on ubuntu-latest, macos-14 and windows-latest.
+- The Windows TD job, under stock Windows PowerShell 5.1 with a plain venv
+  and pip, installs the built wheel and runs `psplat cameras` and
+  `psplat analyze --backend torch` on the fixture, then every PowerShell
+  block in the README and `docs/windows.md` literally. A self-test proves
+  the doc runner fails on a failing native command, a failing cmdlet and an
+  unknown command, and not on stderr output alone.
+- The torch oracle matches a literal per-pixel transcription of gsplat's
+  CUDA forward loop to rtol 1e-9 in float64, on translucent and on dense
+  opaque random scenes; five injected bugs were each caught. Projection and
+  SH match gsplat's own pure-PyTorch reference functions.
+- PLY I/O agrees bit for bit with PlayCanvas splat-transform 3.4.2 in both
+  directions; splat-transform keeps splat order PLY to PLY.
+- Synthetic fixture oracles all hold: off-screen splats invisible; the
+  occluded target contributes exactly 0 in view_01 while in frame, 2.08 in
+  view_05; overlap pair front 20.2 > back 9.1 > 0.
+
+| Measurement (this container) | Value |
+|---|---|
+| Fixture analyse, 8 views, CPU | 0.05 s |
+| PLY parse, 3M splats, warm cache | about 1.9 s (cold adds disk time; 250 MB/s here) |
+| torch backend, 300k splats, 1237×822, opaque surface | 3.2 s per view |
+| torch backend, same, translucent clutter | 5.8 s per view |
+| estimate_seconds vs actual, 300k splats, 3 views | 29 s vs 22 s |
+
+**Findings:**
+
+- gsplat 1.5.3 caps alpha at 0.999, not the Inria 0.99, and stops a pixel
+  when transmittance would reach ≤ 1e-4. Read from its source release; the
+  oracle follows gsplat, with the Inria cap one argument away.
+- gsplat trains in a normalised world frame, so its PLY does not line up
+  with raw COLMAP poses. `bench train` writes cameras through gsplat's own
+  parser to match.
+- Chunk size matters on CPU: 256 splats per step was 4× faster than 4096 on
+  an opaque scene, because whole tiles stop early.
+- CPU analysis of a 3M-splat scene over ~160 views extrapolates to hours,
+  not the tens of minutes the handoff hoped for. Logged as R13, issue #53.
+- GitHub's macOS runners report MPS available, then fail every allocation.
+  Automatic device choice now probes and falls back.
+- The idle-stop script's process check matched its own path ("psplat") and
+  would never have stopped the instance; caught by a dry run, fixed.
+- Unreachable from the dev container: download.pytorch.org,
+  docs.aws.amazon.com, docs.gsplat.studio, Hugging Face. So the DLAMI SSM
+  parameter is discovered at run time, and E0 reference numbers are left
+  empty rather than recalled.
+- `psplat` is currently unclaimed on PyPI.
+
+**Not done, and why:**
+
+- P0.3's round trip on a real garden PLY needs a trained scene (Mac).
+- P0.10 has not been run against AWS; P0.11's E0 needs the GPU box and the
+  published reference numbers.
+- Branch protection (Windows jobs required) is a repository setting for Zach.
+
+**Next:** Zach runs P0.10 and E0 (runbook in `docs/env.md`). P1 starts with
+the P1.0 SOG-ordering spike (#19) and P1.1 baseline scores (#20).

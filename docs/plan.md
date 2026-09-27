@@ -196,9 +196,28 @@ Proposed first PR series on `claude/upbeat-knuth-u1xp0b`:
 | R9 | Dataset licences (Mip-NeRF 360, T&T, 3DGS-QA, GScomp-QA). | Low / high if violated. | Fetch scripts only, never redistribute; S3 bucket private; nothing in the repo or video except our own captures and CC data. |
 | R10 | Baseline-paper ambiguity (PUP Hessian, coreset sensitivity). | High / low. | `<method>-simple` naming + `docs/baselines.md` (handoff §8.9). |
 | R11 | No external testers, so the Windows consumer surface is only ever exercised by us. Blind spots in the afternoon test (an assumed tool, an admin right, a path quirk) survive to release. | Medium / medium. | Windows CI does the literal work: clean-venv wheel install, the full `order/pack/eval/lod/report` path, `analyze --backend torch`, and the README's PowerShell blocks executed verbatim. Zach drives one manual Windows run per phase exit. Unverified steps are labelled unverified in the docs. |
-| R12 | AWS spend. | Low / medium. | Spot for batch, idle-stop cron, budget alarm, ask before any single action > $50. |
+| R12 | AWS spend. | Low / medium. | Spot for batch, idle-stop timer, budget alarm, ask before any single action > $50. |
+| R13 | The portable torch backend is slow on CPU: 3–6 s per 1237×822 view at 300k splats, so a 3M-splat scene over ~160 views is hours, not the tens of minutes the handoff hoped for (measured 2026-09-27). | High / medium — weakens "analyze runs locally" for TDs without an NVIDIA GPU. | The cost is alpha evaluation, not Python overhead. Options: analyse a subset of views or at reduced resolution for CPU runs; vectorise across tiles; rely on `psplat[cuda]` (P1.10). Tracked in [#53](https://github.com/zach/psplat/issues/53). |
 
 ---
+
+## 4a. P0 status (2026-09-27)
+
+Built and pushed; details in `docs/lab-notebook.md`. P0.1, P0.2, P0.4–P0.9 meet
+their acceptance. Still open, each for a reason outside the container:
+P0.3 (round trip on a real garden PLY, needs the Mac), P0.10 (not yet run
+against AWS), P0.11 (E0 needs the GPU box and the published reference
+numbers), P0.12 (process, open by design).
+
+Corrections to the rows above, learnt while building:
+
+- P0.4 and P0.5 were built in the opposite order, because the fixture's
+  oracles are defined through the projection conventions.
+- P0.8's Windows job runs `cameras` and `analyze` today. `order`, `pack`,
+  `eval`, `lod` and `report` do not exist until P1, so each P1 item that adds
+  one must also add it to the `td-windows` job and the README.
+- D2's AMI: the DLAMI SSM parameter name is discovered at run time from the
+  public parameter tree rather than hard-coded.
 
 ## 5. Decisions
 
