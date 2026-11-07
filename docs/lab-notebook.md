@@ -117,3 +117,50 @@ threads, no GPU) and pushed; CI on GitHub Actions. Commits on
 
 **Next:** Zach runs P0.10 and E0 (runbook in `docs/env.md`). P1 starts with
 the P1.0 SOG-ordering spike (#19) and P1.1 baseline scores (#20).
+
+---
+
+## 2026-11-07 — P1.0 spike: does SOG keep splat order?
+
+**What ran:** `scripts/spikes/order_preservation.py` against PlayCanvas
+splat-transform 3.10.3 (3.4.2 in P0), at 4,096 and 100,000 splats, plus SOG
+size experiments at 100k and 400k on spatially coherent synthetic scenes.
+Splats sit on an off-centre jittered grid in random order, so each splat's
+grid cell identifies it after lossy packing and any re-sorting shows up.
+
+**Results:**
+
+- Keep order: PLY, SPZ v4, glTF. Reorder completely (Spearman ≈ 0): SOG
+  from the command line (bundled and unbundled), compressed PLY, Streamed
+  SOG. The source agrees: the SOG writer Morton-sorts "unless a
+  caller-supplied order is used", via the library's `writeSog({indices})`.
+- `writeSog` with identity `indices` keeps order exactly; with a banded
+  order (Morton within cut-point bands) every cut point is an exact prefix.
+- Size cost against splat-transform's Morton SOG, coherent synthetic scenes:
+
+| Layout | 100k | 400k |
+|---|---|---|
+| SOG, 6–7 bands | 1.14 | 1.11 |
+| SOG, 20 bands (5%) | 1.26 | 1.23 |
+| SOG, 100 bands (1%) | 1.42 | 1.39 |
+| SOG, exact psplat order | 1.59 | 1.74 |
+| SPZ, exact psplat order | 1.59 | 1.72 |
+
+- SOG with SH degree ≥ 1 needs a GPU: no WebGPU adapter means an outright
+  failure unless `-g cpu`, and on CPU 32k splats took 4.7 s but 100k ran
+  past 25 min (palette up to 64K entries). Logged as R14.
+
+**Mistake caught:** the first harness used a centred, symmetric grid, so
+the glTF writer's PLY-to-glTF axis flip (x and y negated) looked like a
+scramble. The grid is now off-centre, so a flip shows as unmatched splats,
+and glTF is read back in PLY space; it keeps order exactly.
+
+**Decision:** D7 in `docs/plan.md`; write-up in `docs/formats.md`. SOG via
+the library with banded indices; PLY/SPZ/glTF for arbitrary truncation;
+compressed PLY and Streamed SOG not offered as ordered outputs; version pinned
+and asserted by `tests/test_interop_splat_transform.py`.
+
+**Caveat:** size ratios are from synthetic scenes; re-measure on garden in
+P1.3 before quoting them.
+
+**Next:** P1.1 baseline scores (#20) and P1.2 order + manifest (#21).
