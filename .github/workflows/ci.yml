@@ -46,7 +46,7 @@ jobs:
         include:
           - os: ubuntu-latest
             torch_index: https://download.pytorch.org/whl/cpu
-          - os: macos-14
+          - os: macos-15
           - os: windows-latest
     defaults:
       run:

@@ -164,3 +164,8 @@ and asserted by `tests/test_interop_splat_transform.py`.
 P1.3 before quoting them.
 
 **Next:** P1.1 baseline scores (#20) and P1.2 order + manifest (#21).
+
+**CI note, same day:** GitHub no longer runs the `macos-14` image ("The
+configuration 'macos-14-arm64-us-default' is not supported"); its jobs
+queued until cancelled, on every branch. CI now uses `macos-15`, still Apple
+Silicon, so the msplat import check is unchanged.
