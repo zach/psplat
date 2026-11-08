@@ -15,6 +15,7 @@ vendors, with its licence. Update it in the same PR that adds the dependency.
 | torch | BSD-3-Clause | `torch_backend`, projection, metrics |
 | typer | MIT | command-line interface |
 | PyYAML | MIT | scene registry (`psplat/bench/scenes.yaml`) |
+| jsonschema | MIT | validating `scene.psplat.json` against its schema; pulls in attrs, referencing, jsonschema-specifications and rpds-py, all MIT |
 
 ## Optional extras
 
@@ -32,6 +33,7 @@ vendors, with its licence. Update it in the same PR that adds the dependency.
 | ruff | MIT |
 | mypy | MIT |
 | hatchling | MIT |
+| types-PyYAML, types-jsonschema (typeshed stubs) | Apache-2.0 |
 
 ## Invoked as external processes, never imported
 

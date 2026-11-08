@@ -169,3 +169,47 @@ P1.3 before quoting them.
 configuration 'macos-14-arm64-us-default' is not supported"); its jobs
 queued until cancelled, on every branch. CI now uses `macos-15`, still Apple
 Silicon, so the msplat import check is unchanged.
+
+---
+
+## 2026-11-08 — P1.1 baseline scores, P1.2 order and manifest
+
+**What ran:** P1.1 and P1.2 implemented in the remote container (Linux,
+4 CPU threads, no GPU), as stacked PRs: P1.1 into `main`, P1.2 on top.
+
+**Results:**
+
+- Six baselines: `opacity`, `contribution`, `lightgaussian`, `pup-simple`,
+  `coreset-simple` and `minisplatting-simple`. `docs/baselines.md` records,
+  per paper, what is ambiguous and the reading taken.
+- The torch backend gathers three new per-splat statistics, summed over
+  views: transmittance over composited pixels, top-contributor pixel counts,
+  and a 6×6 Fisher block over mean and log-scale. All three agree with a
+  literal per-pixel loop. The Fisher also matches central finite
+  differences to about 2e-5 relative. Injected bugs were each caught. One
+  of them, a wrong gradient at capped alpha, survived the random scenes and
+  needed a dedicated test.
+- Cost on a CPU: `hits` and `top` add 10–40% to a view's time; `fisher`
+  makes it 2–3 times as long.
+- `psplat order` writes the ordered PLY and `scene.psplat.json`. The
+  manifest is validated against a JSON Schema on write and on read. Each
+  cut's index uses the banded SOG layout's band-edge rule. Windows TD CI
+  runs `order` from the installed wheel.
+
+**Findings:**
+
+- **The plan's acceptance example, "a duplicated splat gets half the
+  score", needed restating.** An exact copy doubles the alpha, so each copy
+  keeps nearly its whole score. The test that means something is a split
+  whose opacities compose to the original's. At o = 0.3, each copy gets
+  0.54 / 0.49 of the contribution and 0.47 / 0.45 of the LightGaussian
+  score. The PUP Fisher drops to about a quarter instead. Not exactly half,
+  because:
+  - the split holds only to first order in alpha;
+  - the faint copies each lose more of their tails to the 1/255 threshold.
+- LightGaussian's Eq. 1 includes transmittance but its Algorithm 2 does not.
+  psplat follows Eq. 1; the released code was not checked.
+- numpy's quicksort happened to keep tie order on small inputs, so a test
+  of tie-breaking needed 200k tied scores to catch an unstable sort.
+
+**Next:** P1.3 `pack` (#22), with the banded SOG writer from the spike.
