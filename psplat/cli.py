@@ -7,6 +7,7 @@ whole v0.1 surface; each stub names the issue that tracks it.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import NoReturn
 
@@ -323,10 +324,175 @@ def lod() -> None:
     _not_yet("lod", 40)
 
 
-@app.command("eval", context_settings=_STUB)
-def eval_() -> None:
+@app.command("eval")
+def eval_(
+    ordered: Path = typer.Argument(
+        ..., metavar="SCENE.ORDERED.PLY", help="Ordered PLY from psplat order."
+    ),
+    cameras: Path = typer.Option(
+        ..., "--cameras", "-c", help="cams.json, a COLMAP model directory, or transforms.json."
+    ),
+    views: str = typer.Option("eval", help="eval, train, all, or a number of evenly spaced views."),
+    budgets: str = typer.Option(
+        "cuts", help="Percentages, e.g. 5,10,25,50,100, or cuts for the manifest's cut points."
+    ),
+    metrics: str = typer.Option(
+        "psnr,ssim,lpips,flip", help="Any of psnr, ssim, lpips, flip, cvvdp."
+    ),
+    images: Path | None = typer.Option(
+        None,
+        help="Compare with these photographs, named as the cameras are, "
+        "instead of with the whole scene's render.",
+    ),
+    manifest_path: Path | None = typer.Option(
+        None, "--manifest", help="Default: SCENE.psplat.json next to the input, if present."
+    ),
+    write_manifest: bool = typer.Option(
+        False, help="Also store each cut's mean metrics in the manifest."
+    ),
+    backend: str = typer.Option("auto", help="Renderer: auto, torch, gsplat or msplat."),
+    device: str | None = typer.Option(None, help="Torch device: cpu, cuda or mps. Default: best."),
+    lpips_net: str = typer.Option("alex", help="LPIPS backbone: alex or vgg."),
+    flip_ppd: float | None = typer.Option(
+        None, help="Pixels per degree for ꟻLIP. Default: its standard 67.02."
+    ),
+    scene_name: str | None = typer.Option(None, help="Scene label for the results table."),
+    trainer: str = typer.Option("", help="Trainer label for the results table."),
+    out: Path | None = typer.Option(
+        None, "--out", "-o", help="Default: SCENE.results.parquet next to the input."
+    ),
+) -> None:
     """Render truncated scenes at each budget and score them; writes results.parquet."""
-    _not_yet("eval", 25)
+    from psplat.eval.evaluate import (
+        DEFAULT_BUDGETS,
+        ImageError,
+        budgets_for,
+        budgets_from_manifest,
+        evaluate,
+        summarise,
+        write_results,
+    )
+    from psplat.eval.metrics import FLIP_PPD, MetricUnavailable, check_metrics, load_metrics
+    from psplat.io import manifest as mf
+    from psplat.io.cameras import CameraFormatError, load_cameras, select_views
+    from psplat.io.ply import PlyFormatError, read_ply
+    from psplat.pack.pack import output_stem, ply_prefix_bytes
+    from psplat.render.base import BackendUnavailable
+    from psplat.render.registry import get_backend, select_backend
+    from psplat.render.torch_backend import default_device
+
+    try:
+        names = check_metrics(metrics.split(","))
+        scene = read_ply(ordered)
+        chosen = select_views(load_cameras(cameras), views)
+    except (ValueError, PlyFormatError, CameraFormatError, OSError) as exc:
+        _fail(str(exc))
+    if not chosen:
+        _fail(
+            f"--views {views} selects no cameras from {cameras}; they may have no eval split. "
+            "Use --views all or a number of views."
+        )
+    stem = output_stem(ordered)
+    manifest_in = manifest_path or ordered.with_name(f"{stem}.psplat.json")
+    manifest = None
+    if manifest_in.exists():
+        try:
+            manifest = mf.read(manifest_in)
+        except mf.ManifestError as exc:
+            _fail(str(exc))
+        if manifest["count"] != scene.count:
+            _fail(f"{manifest_in} is for {manifest['count']:,} splats, not {scene.count:,}")
+    elif manifest_path is not None:
+        _fail(f"{manifest_path} not found")
+    try:
+        if budgets.strip() == "cuts":
+            plan = (
+                budgets_from_manifest(manifest)
+                if manifest
+                else budgets_for(scene.count, DEFAULT_BUDGETS)
+            )
+        else:
+            plan = budgets_for(scene.count, [float(b) for b in budgets.split(",") if b.strip()])
+    except ValueError:
+        _fail(f"--budgets must be percentages in (0, 100] or cuts; got {budgets!r}")
+    if write_manifest and manifest is None:
+        _fail("--write-manifest needs a manifest; run psplat order first")
+
+    try:
+        if backend == "auto":
+            selection = select_backend(device=device)
+            renderer, reason = selection.renderer, selection.reason
+        else:
+            renderer, reason = get_backend(backend, device=device), "requested"
+        if "lpips" in names:
+            typer.echo(f"loading LPIPS ({lpips_net}); PyTorch downloads its weights once", err=True)
+        metric_set = load_metrics(
+            names, device=device or default_device(), lpips_net=lpips_net,
+            flip_ppd=flip_ppd if flip_ppd is not None else FLIP_PPD,
+        )  # fmt: skip
+    except (BackendUnavailable, MetricUnavailable, ValueError) as exc:
+        _fail(str(exc))
+
+    typer.echo(
+        f"backend: {renderer.describe()} ({reason}); {len(plan)} budgets x {len(chosen)} views; "
+        f"reference: {'photographs in ' + str(images) if images else 'the whole scene'}",
+        err=True,
+    )
+
+    def progress(done: int, total: int) -> None:
+        if done == total or done % max(1, total // 10) == 0:
+            typer.echo(f"  {done}/{total}", err=True)
+
+    try:
+        rows = evaluate(scene, chosen, renderer, metric_set, plan, images=images,
+                        progress=progress)  # fmt: skip
+    except (ImageError, BackendUnavailable) as exc:
+        _fail(str(exc))
+
+    sizes = ply_prefix_bytes(ordered, [b.splats for b in plan if b.splats > 0])
+    provenance = (manifest or {}).get("provenance", {})
+    common = {
+        "scene": scene_name or stem,
+        "trainer": trainer,
+        "ordering": (manifest or {}).get("ordering", {}).get("method", "file order"),
+        "terms": ",".join((manifest or {}).get("ordering", {}).get("terms", [])),
+        "format": "ply",
+        "reference": "images" if images else "full",
+        "backend": renderer.describe(),
+        "git_sha": (provenance.get("git") or {}).get("sha"),
+        "source_sha256": (manifest or {}).get("source_sha256"),
+        "tool": f"psplat {__version__}",
+    }
+    for row in rows:
+        row.update(common)
+        row["bytes"] = sizes.get(int(row["budget_splats"]))
+    target = out or ordered.with_name(f"{stem}.results.parquet")
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write_results(rows, target)
+    except OSError as exc:
+        _fail(f"could not write {target}: {exc}")
+
+    summary = summarise(rows, names)
+    typer.echo("budget      splats  " + "  ".join(f"{n:>8}" for n in names))
+    for entry in summary:
+        cells = "  ".join(f"{entry[n]:8.4f}" for n in names)
+        typer.echo(f"{entry['budget_frac']:>6.0%}  {entry['budget_splats']:>10,}  {cells}")
+    typer.echo(f"wrote {target} ({len(rows)} rows)")
+
+    if write_manifest and manifest is not None:
+        by_index = {e["budget_splats"]: e for e in summary}
+        for cut in manifest["cuts"]:
+            means = by_index.get(int(cut["index"]))
+            for n in names:
+                if means is not None and math.isfinite(means[n]):
+                    cut[n] = round(float(means[n]), 6)
+        manifest["provenance"]["eval"] = {
+            "reference": common["reference"], "views": len(chosen), "metrics": list(names),
+            "settings": metric_set.settings, "backend": renderer.describe(),
+        }  # fmt: skip
+        mf.write(manifest, manifest_in)
+        typer.echo(f"updated {manifest_in}")
 
 
 bench_app = typer.Typer(

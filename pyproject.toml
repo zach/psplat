@@ -32,6 +32,12 @@ dependencies = [
   "typer>=0.12",
   "pyyaml>=6.0",
   "jsonschema>=4.18",
+  # psplat eval (P1.6): metrics, results table, reference photographs.
+  "flip-evaluator>=1.7",
+  "lpips>=0.1.4",
+  "torchvision",
+  "pyarrow>=15",
+  "pillow>=10",
 ]
 
 [project.optional-dependencies]
@@ -39,8 +45,9 @@ dependencies = [
 # gsplat's wheel index. Left empty until that triple is tested.
 cuda = []
 msplat = ["msplat>=1.1.4; sys_platform == 'darwin' and platform_machine == 'arm64'"]
-# ColorVideoVDP is added only after its licence is checked (#25).
-cvvdp = []
+# ColorVideoVDP (pycvvdp, MIT; licence checked 2026-11-08). Optional because it
+# brings ffmpeg-python, matplotlib, PyEXR and huggingface_hub.
+cvvdp = ["cvvdp>=0.5.7"]
 # AWS access goes through the AWS CLI in scripts/; the extra is reserved
 # so `pip install -e ".[dev,aws]"` in the bootstrap stays stable.
 aws = []
@@ -50,6 +57,7 @@ dev = [
   "mypy>=1.11",
   "types-PyYAML",
   "types-jsonschema",
+  "scikit-image",  # reference SSIM in tests/test_metrics.py
 ]
 
 [project.scripts]
@@ -87,6 +95,11 @@ ignore = [
 strict = true
 python_version = "3.12"
 files = ["psplat"]
+
+[[tool.mypy.overrides]]
+# Metric and table libraries without type information.
+module = ["flip_evaluator", "lpips", "pycvvdp", "pyarrow", "pyarrow.*"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

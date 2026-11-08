@@ -258,3 +258,54 @@ Mac.
 
 **Next:** P1.4 gsplat backend (#23) needs the GPU box; P1.6 metrics and
 `psplat eval` (#25) and P1.7 web viewer (#26) can proceed here.
+
+---
+
+## 2026-11-08 (evening) — P1.6 metrics and eval
+
+**What ran:** #57 (P1.3) merged. P1.6 `psplat eval` and `eval/metrics.py`
+implemented in the remote container.
+
+**Results:**
+
+- **What eval does:** renders the first k splats for each budget from the
+  eval views and scores each render. The reference is either the whole
+  scene's render or, with `--images`, the training photographs. It writes
+  `results.parquet` (one row per budget and view, with the columns of
+  handoff §4.2 step 5) and can store each cut's mean in the manifest.
+- **Metrics:** PSNR and SSIM are psplat's own; LPIPS uses `lpips` (AlexNet
+  by default); ꟻLIP uses NVIDIA's `flip-evaluator`; ColorVideoVDP is
+  behind `psplat[cvvdp]`.
+- **Fixture, against the whole scene, on 2 eval views:**
+
+| Budget | PSNR | SSIM | LPIPS | ꟻLIP |
+|---|---|---|---|---|
+| 5% | 17.0 | 0.736 | 0.135 | 0.124 |
+| 25% | 22.0 | 0.876 | 0.053 | 0.078 |
+| 50% | 28.0 | 0.964 | 0.020 | 0.041 |
+| 75% | 34.2 | 0.989 | 0.005 | 0.017 |
+
+**Checks against references:**
+
+- SSIM equals scikit-image to 1e-6.
+- ꟻLIP on NVIDIA's published pair: 0.159691, which is flip-evaluator's own
+  result from the files; NVIDIA's test expects 0.159693 (made on Windows).
+- LPIPS equals the `lpips` package's own image path.
+- ColorVideoVDP gives 10 JOD for identical images.
+
+**Findings:**
+
+- A first ꟻLIP wrapper passed ppd = 67 and got 0.159717. ꟻLIP's default
+  is 67.0206 pixels per degree, computed from its viewing condition, and
+  that is enough to move the fifth decimal. Now exact.
+- ColorVideoVDP 0.5.7 is MIT (its LICENSE file), which settles the licence
+  check that #25 required.
+  - It needs a `torch.device` object; a device string fails inside it.
+  - Its ML variant downloads from Hugging Face, but psplat does not use it.
+- torchvision 0.29 deprecates its image decoding. `--images` reads with
+  Pillow instead, which torchvision already requires.
+- LPIPS's AlexNet weights are a 233 MB one-time download; the README says
+  so.
+- The fixture's eval takes about 4 s on this CPU, rendering included.
+
+**Next:** P1.7 web viewer (#26). P1.4 needs the GPU box.
