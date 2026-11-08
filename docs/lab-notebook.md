@@ -309,3 +309,65 @@ implemented in the remote container.
 - The fixture's eval takes about 4 s on this CPU, rendering included.
 
 **Next:** P1.7 web viewer (#26). P1.4 needs the GPU box.
+
+---
+
+## 2026-11-08 (night) — P1.7 web viewer
+
+**What ran:** #58 (P1.6) merged. P1.7 `psplat viewer` and `engines/web/`
+built in the remote container. The viewer was checked in headless Chromium
+with software WebGL, on the fixture packed as PLY and as SOG.
+
+**Results:**
+
+- **Viewer:** the PlayCanvas engine 2.23.3, vendored and unmodified, plus
+  one page and one module; no build step. `psplat viewer dist` serves it with
+  the scene, manifest and cameras on 127.0.0.1.
+- **Controls:**
+  - a budget slider: cut points, or any count for a PLY;
+  - a split-screen wipe against the whole scene;
+  - readouts of splats, bytes and frame time;
+  - the E4 projected-size threshold;
+  - dataset camera views.
+- **Checks in the browser:**
+  - brightness rises with every cut, and the slider follows;
+  - the wipe's halves equal the budget and full images exactly;
+  - a 1000 px threshold hides everything.
+- **SOG against PLY:** each budget adds the same brightness over the
+  smallest, within 0.05 of the PLY. A Morton-sorted SOG, written by
+  splat-transform's command line, misses by up to 40 and is kept in the
+  tests as a negative control.
+
+**Findings:**
+
+- **PlayCanvas reorders splats on load.** A PLY is Morton-sorted unless the
+  asset sets `reorder: false`, and the glTF loader always sorts, so the
+  viewer refuses glTF. That would have silently broken every budget.
+- **Ways PlayCanvas offers to draw fewer splats did not fit:**
+  - `GSplatContainer` can draw a prefix, but forces SH bands to 0;
+  - `splatBudget` applies only to its streamed spatial level-of-detail
+    format;
+  - shader-side hiding keeps every splat in the sort.
+
+  So the viewer builds a resource from the first k rows of the loaded data
+  (views, not copies). It keeps SH, and the frame time follows the budget.
+- `scissorRect` on a camera component is ignored; the engine applies it only
+  to shadow cameras. The wipe uses two half-canvas viewports, with the full
+  canvas's projection shifted by ±1 in clip-space x.
+- **A SOG needs two things:**
+  - PlayCanvas's texture handler, since its images load as texture assets;
+    without it the loader fails deep inside decompression;
+  - `decompress: true`, so the loader decodes it while it still holds the
+    textures.
+- **A flaky SOG/PLY comparison was traced, not retried away.** One large
+  splat's spherical-harmonic colour varies between SOG writes, because the
+  clustering starts at random. Up to 3.7% on the left half was measured.
+  The test now compares per-budget gains; a Morton-sorted SOG shows the
+  comparison still catches a wrong order.
+
+**Not done:** a person opening it in Chrome or Edge on Windows, and the
+garden scene. CI drives the Windows wheel's viewer in the runner's Edge,
+headless, which is the closest automated stand-in.
+
+**Next:** P1.8, the Unreal sample (Mac; time-boxed), or P1.12, README as the
+TD guide.

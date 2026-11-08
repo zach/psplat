@@ -73,8 +73,12 @@ path = "psplat/__init__.py"
 [tool.hatch.build.targets.wheel]
 packages = ["psplat"]
 
+[tool.hatch.build.targets.wheel.force-include]
+# The web viewer's static files, served by `psplat viewer`.
+"engines/web" = "psplat/_web"
+
 [tool.hatch.build.targets.sdist]
-include = ["psplat", "tests", "docs", "scripts", "README.md", "LICENSE", "THIRD_PARTY.md"]
+include = ["psplat", "engines/web", "tests", "docs", "scripts", "README.md", "LICENSE", "THIRD_PARTY.md"]
 
 [tool.ruff]
 line-length = 100

@@ -60,6 +60,12 @@ jobs:
         if: runner.os == 'Linux'
         with:
           node-version: "22"
+      - name: Playwright and Chromium, for the web viewer test (Linux only)
+        if: runner.os == 'Linux'
+        run: |
+          npm install -g playwright@1.63.0
+          npx playwright install --with-deps chromium
+          echo "NODE_PATH=$(npm root -g)" >> "$GITHUB_ENV"
       - name: Install
         run: |
           python -m pip install uv
@@ -92,6 +98,7 @@ jobs:
           # LPIPS downloads 233 MB of AlexNet weights; once, on Linux. Windows
           # runs LPIPS in td-windows below.
           PSPLAT_LPIPS: ${{ runner.os == 'Linux' && '1' || '0' }}
+          PSPLAT_BROWSER: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: pytest -m "not slow"
 
   # The afternoon test, as literally as CI allows: a clean Windows machine,
@@ -164,6 +171,30 @@ jobs:
           & $psplat eval $env:RUNNER_TEMP\ordered\scene.ordered.ply --cameras tests\fixtures\synthetic\cams.json --backend torch --out $env:RUNNER_TEMP\results.parquet --write-manifest
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path $env:RUNNER_TEMP\results.parquet)) { throw "no results written" }
+      - name: Web viewer from the wheel, driven in Microsoft Edge
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $psplat = "$env:RUNNER_TEMP\tdvenv\Scripts\psplat.exe"
+          # Playwright drives the runner's installed Edge; no browser download.
+          $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = '1'
+          npm install --prefix $env:RUNNER_TEMP\pw --silent playwright@1.63.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:NODE_PATH = "$env:RUNNER_TEMP\pw\node_modules"
+          $server = Start-Process -FilePath $psplat -PassThru -NoNewWindow -ArgumentList @(
+            'viewer', "$env:RUNNER_TEMP\dist", '--cameras', 'tests\fixtures\synthetic\cams.json',
+            '--no-browser', '--port', '8642')
+          $up = $false
+          for ($i = 0; $i -lt 30 -and -not $up; $i++) {
+            Start-Sleep -Seconds 1
+            try { $r = Invoke-WebRequest -UseBasicParsing http://127.0.0.1:8642/viewer.mjs; $up = $r.StatusCode -eq 200 } catch { }
+          }
+          if (-not $up) { Stop-Process $server; throw "psplat viewer did not start" }
+          if ($r.Headers['Content-Type'] -notlike 'text/javascript*') { Stop-Process $server; throw "viewer.mjs served as $($r.Headers['Content-Type'])" }
+          node tests\web\check_viewer.mjs http://127.0.0.1:8642/ --channel msedge --check --out $env:RUNNER_TEMP\viewer-report.json
+          $code = $LASTEXITCODE
+          Stop-Process $server
+          if ($code -ne 0) { Get-Content $env:RUNNER_TEMP\viewer-report.json; exit $code }
       - name: Check the doc runner catches failures under PowerShell 5.1
         shell: powershell
         run: |

@@ -6,8 +6,8 @@ Gaussian Splat scene once, then orders its splats so that the first N are
 the best-looking N. Any engine can then truncate the file at whatever
 budget it has, the way an MP3 decoder plays whatever bitrate it gets.
 
-**Status: pre-alpha.** `psplat analyze`, `order`, `pack` and `eval` work on
-any machine today. The web viewer and the Unreal Engine sample are next;
+**Status: pre-alpha.** `psplat analyze`, `order`, `pack`, `eval` and the
+web viewer work on any machine today. The Unreal Engine sample is next;
 [`docs/plan.md`](docs/plan.md) has the roadmap and
 [issues](https://github.com/zach/psplat/issues) track each piece.
 
@@ -139,6 +139,29 @@ to compress on scenes over about 33,000 splats. Until psplat can use one,
 it writes those SOG files without it and tells you so;
 [`docs/formats.md`](docs/formats.md) explains why.
 
+## Look at it in a browser
+
+<!-- doctest: skip -->
+```bash
+psplat viewer dist
+```
+
+```powershell
+psplat viewer dist
+```
+
+This opens the web viewer in your default browser. Chrome, Edge and Firefox
+all work; nothing is installed, and the viewer only listens on this machine.
+Drag the **Budget** slider to see the scene with fewer splats, and tick
+**Compare with full scene** for a split screen: the budget on the left, the
+whole scene on the right. The panel shows how many splats are drawn, how
+many bytes that budget takes and the frame time. **View** jumps to the
+cameras in `cams.json`; drag to orbit, right-drag to pan, and scroll to zoom.
+Press Ctrl+C in the terminal to stop the viewer.
+
+A SOG keeps psplat's order only at the cut points, so its slider snaps to
+them; a PLY takes any splat count.
+
 ## See what each budget costs in quality
 
 ```bash
@@ -166,7 +189,7 @@ the issue that tracks them.
 | `cameras` | converts COLMAP or nerfstudio cameras to `cams.json` | works |
 | `order` | sorts splats best first and writes the cut-point manifest | works |
 | `pack` | writes PLY, SOG, SPZ or glTF, with per-budget sizes | works |
-| `viewer` | web viewer with a budget slider | next |
+| `viewer` | web viewer with a budget slider and split-screen comparison | works |
 | `eval` | renders each budget and scores it against the whole scene or photographs | works |
 | `lod`, `bench`, `report`, `study` | level of detail and experiments | later |
 
