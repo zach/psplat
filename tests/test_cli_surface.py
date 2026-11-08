@@ -36,6 +36,6 @@ def test_version() -> None:
 
 
 def test_stub_names_its_tracking_issue_and_exits_2() -> None:
-    result = runner.invoke(app, ["pack", "scene.ordered.ply", "--sog", "--out", "dist"])
+    result = runner.invoke(app, ["lod", "scene.ordered.ply", "--distances", "1,2,4"])
     assert result.exit_code == 2
-    assert "issues/22" in result.output
+    assert "issues/40" in result.output

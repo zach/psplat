@@ -202,3 +202,69 @@ def test_library_sog_writer_honours_a_given_order(
             assert set(perm[:k].tolist()) == set(range(k)), f"prefix {k} is not exact"
         # The identity also passes the prefix check; make sure the order file was used.
         np.testing.assert_array_equal(perm, banded_order(scene.means, cuts))
+
+
+# psplat pack (P1.3) --------------------------------------------------------------------
+
+
+def _packed(
+    tmp_path: Path,
+    splat_transform: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    degree: int,
+    *formats: str,
+    sog_sh: str = "auto",
+) -> tuple[Scene, np.ndarray, Path]:
+    """Pack the grid scene, treating its file order as psplat's order."""
+    from psplat.io import manifest as mf
+    from psplat.pack.pack import pack
+
+    monkeypatch.setenv("PSPLAT_SPLAT_TRANSFORM_DIR", str(splat_transform))
+    scene, cells = _grid_scene()
+    rng = np.random.default_rng(5)
+    scene.shN = (rng.normal(size=(scene.count, (degree + 1) ** 2 - 1, 3)) * 0.2).astype(np.float32)
+    write_ply(scene, tmp_path / "grid.ordered.ply")
+    manifest = mf.build(
+        source_sha256="0" * 64, count=scene.count, method="contribution", terms=["contribution"],
+        cuts_percent=[5, 10, 25, 50, 75, 100], provenance={"tool": "psplat test"},
+    )  # fmt: skip
+    mf.write(manifest, tmp_path / "grid.psplat.json")
+    pack(tmp_path / "grid.ordered.ply", tmp_path / "grid.psplat.json", formats,
+         tmp_path / "dist", sog_sh=sog_sh)  # fmt: skip
+    return scene, cells, tmp_path / "dist"
+
+
+def test_pack_spz_and_gltf_keep_exact_order(
+    tmp_path: Path, splat_transform: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    scene, cells, dist = _packed(tmp_path, splat_transform, monkeypatch, 0, "spz", "gltf")
+    _cli(splat_transform, str(dist / "grid.spz"), str(tmp_path / "spz.ply"))
+    spz = _input_index(read_ply(tmp_path / "spz.ply").means.astype(np.float64), cells)
+    glb = _input_index(_glb_positions(dist / "grid.glb"), cells)
+    np.testing.assert_array_equal(spz, np.arange(scene.count))
+    np.testing.assert_array_equal(glb, np.arange(scene.count))
+
+
+@pytest.mark.parametrize(("degree", "policy", "bands"), [(0, "auto", 0), (1, "auto", 3),
+                                                          (1, "drop", 0)])  # fmt: skip
+def test_pack_sog_cuts_are_exact_prefixes(
+    tmp_path: Path, splat_transform: Path, monkeypatch: pytest.MonkeyPatch,
+    degree: int, policy: str, bands: int,
+) -> None:  # fmt: skip
+    from psplat.io import manifest as mf
+    from psplat.pack.layout import banded_order_at
+
+    scene, cells, dist = _packed(tmp_path, splat_transform, monkeypatch, degree, "sog",
+                                 sog_sh=policy)  # fmt: skip
+    _cli(splat_transform, str(dist / "grid.sog"), str(tmp_path / "back.ply"))
+    back = read_ply(tmp_path / "back.ply")
+    perm = _input_index(back.means.astype(np.float64), cells)
+    cuts = mf.read(dist / "grid.psplat.json")["cuts"]
+    edges = [0] + [c["index"] for c in cuts]
+    np.testing.assert_array_equal(perm, banded_order_at(scene.means, edges))
+    for cut in cuts:
+        k = cut["index"]
+        # The first k texels are exactly the splats a PLY truncated at k holds.
+        assert set(perm[:k].tolist()) == set(range(k)), f"cut {k}"
+        assert cut["bytes_sog"] > 0
+    assert back.shN.shape[1] == bands

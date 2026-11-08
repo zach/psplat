@@ -50,9 +50,21 @@ def banded_order(means: NDArray[np.floating], cuts_percent: Sequence[float]) -> 
     band, so the first ``i`` texels at any cut point ``i`` hold exactly
     splats ``0 .. i-1``; within a band they are in Morton order.
     """
+    return banded_order_at(means, band_bounds(len(means), cuts_percent))
+
+
+def banded_order_at(means: NDArray[np.floating], bounds: Sequence[int]) -> NDArray[np.uint32]:
+    """:func:`banded_order` with the band edges given as splat counts.
+
+    ``bounds`` must start at 0, end at ``len(means)`` and never decrease;
+    the manifest's ``cuts[].index`` values, with 0 in front, are such a list.
+    """
     n = len(means)
+    bounds = list(bounds)
+    if not bounds or bounds[0] != 0 or bounds[-1] != n or bounds != sorted(bounds):
+        raise ValueError(f"band edges must rise from 0 to {n}, got {bounds}")
     order = []
-    for start, stop in itertools.pairwise(band_bounds(n, cuts_percent)):
+    for start, stop in itertools.pairwise(bounds):
         idx = np.arange(start, stop)
         order.append(idx[np.argsort(morton_codes(np.asarray(means)[idx]), kind="stable")])
     return (np.concatenate(order) if order else np.zeros(0)).astype(np.uint32)

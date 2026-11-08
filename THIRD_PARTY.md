@@ -41,6 +41,8 @@ vendors, with its licence. Update it in the same PR that adds the dependency.
 |---|---|---|
 | gsplat `examples/simple_trainer.py` | Apache-2.0 | `psplat bench train` on the AWS box |
 | AWS CLI v2 | Apache-2.0 | `scripts/aws_*.sh` |
+| PlayCanvas splat-transform 3.10.3, run under Node.js, with what npm installs alongside it (`@adobe/spz`, `webgpu`, `playcanvas`, `debug`, `ms`, `@webgpu/types`) | MIT; `@adobe/spz` ISC; `@webgpu/types` BSD-3-Clause (read from each package.json, 2026-11-08) | `psplat pack --sog/--spz/--gltf`; installed by npm into the user's cache, never vendored |
+| Node.js and npm | MIT (Node.js), Artistic-2.0 (npm) | the user's own install, needed only for those formats |
 
 ## Data
 
