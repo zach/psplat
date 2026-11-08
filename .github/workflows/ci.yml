@@ -65,9 +65,14 @@ jobs:
           python -m pip install uv
           uv venv -p 3.12 .venv
           if [ -n "${{ matrix.torch_index }}" ]; then
-            uv pip install --python .venv torch --index-url "${{ matrix.torch_index }}"
+            # torchvision from the same index, or PyPI's would pull CUDA torch.
+            uv pip install --python .venv torch torchvision --index-url "${{ matrix.torch_index }}"
           fi
           uv pip install --python .venv -e ".[dev]"
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            # ColorVideoVDP is optional; exercise it on one OS.
+            uv pip install --python .venv -e ".[dev,cvvdp]"
+          fi
           if [ "$RUNNER_OS" = "Windows" ]; then
             cygpath -w "$PWD/.venv/Scripts" >> "$GITHUB_PATH"
           else
@@ -84,6 +89,9 @@ jobs:
       - name: pytest
         env:
           PSPLAT_INTEROP: ${{ runner.os == 'Linux' && '1' || '0' }}
+          # LPIPS downloads 233 MB of AlexNet weights; once, on Linux. Windows
+          # runs LPIPS in td-windows below.
+          PSPLAT_LPIPS: ${{ runner.os == 'Linux' && '1' || '0' }}
         run: pytest -m "not slow"
 
   # The afternoon test, as literally as CI allows: a clean Windows machine,
@@ -152,6 +160,10 @@ jobs:
           foreach ($f in 'scene.ordered.ply', 'scene.sog', 'scene.spz', 'scene.glb', 'scene.psplat.json') {
             if (-not (Test-Path $env:RUNNER_TEMP\dist\$f)) { throw "$f not written" }
           }
+          # eval on CPU with every default metric, LPIPS included.
+          & $psplat eval $env:RUNNER_TEMP\ordered\scene.ordered.ply --cameras tests\fixtures\synthetic\cams.json --backend torch --out $env:RUNNER_TEMP\results.parquet --write-manifest
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path $env:RUNNER_TEMP\results.parquet)) { throw "no results written" }
       - name: Check the doc runner catches failures under PowerShell 5.1
         shell: powershell
         run: |

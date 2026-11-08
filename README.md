@@ -6,8 +6,8 @@ Gaussian Splat scene once, then orders its splats so that the first N are
 the best-looking N. Any engine can then truncate the file at whatever
 budget it has, the way an MP3 decoder plays whatever bitrate it gets.
 
-**Status: pre-alpha.** `psplat analyze`, `order` and `pack` work on any
-machine today. The web viewer and the Unreal Engine sample are next;
+**Status: pre-alpha.** `psplat analyze`, `order`, `pack` and `eval` work on
+any machine today. The web viewer and the Unreal Engine sample are next;
 [`docs/plan.md`](docs/plan.md) has the roadmap and
 [issues](https://github.com/zach/psplat/issues) track each piece.
 
@@ -139,6 +139,22 @@ to compress on scenes over about 33,000 splats. Until psplat can use one,
 it writes those SOG files without it and tells you so;
 [`docs/formats.md`](docs/formats.md) explains why.
 
+## See what each budget costs in quality
+
+```bash
+psplat eval scene.ordered.ply --cameras cams.json
+```
+
+```powershell
+psplat eval scene.ordered.ply --cameras cams.json
+```
+
+This renders each budget from the cameras set aside for evaluation and
+compares it with the whole scene. It prints a table of PSNR, SSIM, LPIPS
+and ꟻLIP per budget and writes every number to `scene.results.parquet`. The
+first run downloads LPIPS's network weights (233 MB) once.
+[`docs/metrics.md`](docs/metrics.md) explains each metric.
+
 ## Commands
 
 `psplat --help` lists every command. Those not built yet say so and link to
@@ -151,7 +167,8 @@ the issue that tracks them.
 | `order` | sorts splats best first and writes the cut-point manifest | works |
 | `pack` | writes PLY, SOG, SPZ or glTF, with per-budget sizes | works |
 | `viewer` | web viewer with a budget slider | next |
-| `eval`, `lod`, `bench`, `report`, `study` | evaluation and experiments | later |
+| `eval` | renders each budget and scores it against the whole scene or photographs | works |
+| `lod`, `bench`, `report`, `study` | level of detail and experiments | later |
 
 ## Licence
 

@@ -15,6 +15,11 @@ vendors, with its licence. Update it in the same PR that adds the dependency.
 | torch | BSD-3-Clause | `torch_backend`, projection, metrics |
 | typer | MIT | command-line interface |
 | PyYAML | MIT | scene registry (`psplat/bench/scenes.yaml`) |
+| flip-evaluator | BSD-3-Clause (NVIDIA) | ꟻLIP in `psplat eval` |
+| lpips | BSD-2-Clause | LPIPS in `psplat eval`; its backbone's ImageNet weights are downloaded by torchvision on first use, never redistributed |
+| torchvision | BSD-3-Clause | LPIPS backbones |
+| pyarrow | Apache-2.0 | `results.parquet` |
+| Pillow | MIT-CMU (HPND) | reading reference photographs in `psplat eval --images` |
 | jsonschema | MIT | validating `scene.psplat.json` against its schema; pulls in attrs, referencing, jsonschema-specifications and rpds-py, all MIT |
 
 ## Optional extras
@@ -23,7 +28,7 @@ vendors, with its licence. Update it in the same PR that adds the dependency.
 |---|---|---|---|
 | `msplat` | msplat | Apache-2.0 | declared; backend lands in P1.5 (#24) |
 | `cuda` | gsplat | Apache-2.0 | pin lands in P1.10 (#29) |
-| `cvvdp` | ColorVideoVDP | to be checked | not added until licence review (#25) |
+| `cvvdp` | cvvdp (ColorVideoVDP) | MIT (LICENSE file of 0.5.7, checked 2026-11-08) | `psplat eval --metrics ...,cvvdp`; brings ffmpeg-python, matplotlib, PyEXR and huggingface_hub; psplat uses only the non-ML metric, which needs no download |
 
 ## Development only
 
@@ -34,6 +39,7 @@ vendors, with its licence. Update it in the same PR that adds the dependency.
 | mypy | MIT |
 | hatchling | MIT |
 | types-PyYAML, types-jsonschema (typeshed stubs) | Apache-2.0 |
+| scikit-image | BSD-3-Clause |
 
 ## Invoked as external processes, never imported
 
