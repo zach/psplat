@@ -18,6 +18,13 @@ Each splat's contribution to the view is the sum over pixels of the
 ``T`` carried across chunks, so memory stays flat however many splats pile
 into one tile.
 
+The same pass can gather the extra per-splat statistics the baseline
+importance scores need (:data:`STATISTICS`, P1.1), summed over views:
+transmittance over the pixels a splat is composited into (LightGaussian),
+the number of pixels where it is the largest contributor (Mini-Splatting),
+and a 6×6 Fisher block over its mean and log-scale (PUP 3D-GS). They cost
+nothing unless asked for. ``docs/baselines.md`` gives the definitions.
+
 Speed, measured in this repository's container (4 CPU threads): about 3–6 s
 per 1237×822 view for 300k splats. The cost is the alpha evaluation itself
 (tile pixels × splat pairs), not Python overhead, so a 3M-splat scene over
@@ -32,8 +39,9 @@ import math
 import os
 import time
 import warnings
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Collection, Sequence
+from dataclasses import dataclass, replace
+from typing import Any
 
 import numpy as np
 import torch
@@ -60,6 +68,12 @@ TILE = 16
 # CPU: 256 was fastest for both an opaque surface (3.2 s vs 13.5 s at 4096)
 # and translucent clutter (5.8 s vs 7.1 s).
 CHUNK = 256
+
+# Per-splat statistics, summed over views, that rasterize() can accumulate
+# alongside the contribution. Shapes: (N,), (N,) and (N, 6, 6).
+STATISTICS = ("hit_transmittance", "top_count", "fisher")
+# Parameters the Fisher block is taken over: world-space mean, then log-scale.
+FISHER_PARAMS = ("x", "y", "z", "log_sx", "log_sy", "log_sz")
 
 
 def _usable(device: str) -> bool:
@@ -150,14 +164,50 @@ class TorchRenderer:
         cameras: Sequence[Camera],
         progress: ProgressFn | None = None,
     ) -> NDArray[np.float32]:
+        return self.statistics(scene, cameras, (), progress)["contribution"]
+
+    def statistics(
+        self,
+        scene: Scene,
+        cameras: Sequence[Camera],
+        stats: Collection[str],
+        progress: ProgressFn | None = None,
+    ) -> dict[str, NDArray[Any]]:
+        """The ``(N, V)`` contribution plus the requested :data:`STATISTICS`.
+
+        Each statistic is summed over ``cameras``: ``hit_transmittance`` and
+        ``fisher`` as float32, ``top_count`` as int64.
+        """
+        unknown = set(stats) - set(STATISTICS)
+        if unknown:
+            raise ValueError(f"unknown statistics {sorted(unknown)}; known: {STATISTICS}")
         splats = SceneTensors.from_scene(scene, self.device, self.dtype)
-        out = np.zeros((scene.count, len(cameras)), np.float32)
+        n = scene.count
+        acc = self.accumulators(n, stats)
+        out = np.zeros((n, len(cameras)), np.float32)
         for v, camera in enumerate(cameras):
-            _, _, contrib = self.rasterize(splats, camera, want_image=False)
+            _, _, contrib = self.rasterize(splats, camera, want_image=False, extras=acc)
             out[:, v] = contrib.cpu().numpy()
             if progress is not None:
                 progress(v + 1, len(cameras))
-        return out
+        result: dict[str, NDArray[Any]] = {"contribution": out}
+        for name, tensor in acc.items():
+            array = tensor.cpu().numpy()
+            result[name] = array if name == "top_count" else array.astype(np.float32)
+        return result
+
+    def accumulators(self, count: int, stats: Collection[str]) -> dict[str, Tensor]:
+        """Zeroed accumulators for :meth:`rasterize`'s ``extras``."""
+        shapes = {"hit_transmittance": (count,), "top_count": (count,), "fisher": (count, 6, 6)}
+        return {
+            name: torch.zeros(
+                shapes[name],
+                device=self.device,
+                dtype=torch.int64 if name == "top_count" else self.dtype,
+            )
+            for name in STATISTICS
+            if name in stats
+        }
 
     def estimate_seconds(self, scene: Scene, cameras: Sequence[Camera]) -> float | None:
         """Estimate wall time for :meth:`contributions` before running it.
@@ -218,19 +268,32 @@ class TorchRenderer:
         return _Bins(ids, proj, pos[by_tile], tile_start, tiles_x, tiles_y)
 
     def rasterize(
-        self, splats: SceneTensors, camera: Camera, *, want_image: bool
+        self,
+        splats: SceneTensors,
+        camera: Camera,
+        *,
+        want_image: bool,
+        extras: dict[str, Tensor] | None = None,
     ) -> tuple[Tensor | None, Tensor, Tensor]:
         """Composite one view.
 
         Returns ``(image or None, alpha image, contribution per splat)``; the
-        contribution is ``(N,)`` in the dtype of ``splats``.
+        contribution is ``(N,)`` in the dtype of ``splats``. ``extras`` maps
+        names from :data:`STATISTICS` to accumulators from
+        :meth:`accumulators`, which this view's values are added into.
         """
         dev, dtype = splats.means.device, splats.means.dtype
+        extras = extras or {}
         bins = self._bin(splats, camera)
         proj, ids = bins.proj, bins.ids
         means2d = proj.means2d[ids]
         conics = proj.conics[ids]
         opac = proj.opacities[ids]
+        hit_t = extras.get("hit_transmittance")
+        top = extras.get("top_count")
+        fisher = extras.get("fisher")
+        if fisher is not None:
+            jac_mean2d, jac_conic = projection_jacobians(splats, camera, ids)
         colours: Tensor | None = None
         if want_image:
             campos = torch.as_tensor(camera.position, device=dev, dtype=dtype)
@@ -259,6 +322,9 @@ class TorchRenderer:
             trans = torch.ones(pix.shape[0], device=dev, dtype=dtype)
             live = torch.ones(pix.shape[0], device=dev, dtype=torch.bool)
             tile_rgb = torch.zeros(pix.shape[0], 3, device=dev, dtype=dtype)
+            if top is not None:
+                best_w = torch.zeros(pix.shape[0], device=dev, dtype=dtype)
+                best_id = torch.zeros(pix.shape[0], device=dev, dtype=torch.long)
             for c0 in range(0, members.shape[0], CHUNK):
                 chunk = members[c0 : c0 + CHUNK]
                 alpha = gaussian_alpha(
@@ -274,6 +340,21 @@ class TorchRenderer:
                 contrib_sorted.index_add_(0, chunk, weight.sum(dim=1))
                 if colours is not None:
                     tile_rgb += weight.T @ colours[chunk]
+                if hit_t is not None:
+                    hit = (alpha > 0) & keep
+                    hit_t.index_add_(0, ids[chunk], (t_before * hit).sum(dim=1))
+                if top is not None:
+                    # Strictly greater, so on a tie the nearer splat keeps the pixel.
+                    vals, arg = weight.max(dim=0)
+                    better = vals > best_w
+                    best_w = torch.where(better, vals, best_w)
+                    best_id = torch.where(better, ids[chunk][arg], best_id)
+                if fisher is not None:
+                    grad = _alpha_param_grads(
+                        alpha, t_before * keep, conics[chunk], means2d[chunk], pix,
+                        jac_mean2d[chunk], jac_conic[chunk], self.alpha_max,
+                    )  # fmt: skip
+                    fisher.index_add_(0, ids[chunk], torch.einsum("kpi,kpj->kij", grad, grad))
                 stopped = ~keep.all(dim=0)
                 # Transmittance after the last splat actually composited.
                 last = torch.where(keep, t_after, torch.full_like(t_after, math.inf)).amin(dim=0)
@@ -281,6 +362,9 @@ class TorchRenderer:
                 live = live & ~stopped
                 if not bool(live.any()):
                     break
+            if top is not None:
+                won = best_w > 0
+                top.index_add_(0, best_id[won], torch.ones_like(best_id[won]))
             alpha_img[y0:y1, x0:x1] = (1.0 - trans).reshape(y1 - y0, x1 - x0)
             if image is not None:
                 image[y0:y1, x0:x1] = (tile_rgb + trans[:, None] * bg).reshape(y1 - y0, x1 - x0, 3)
@@ -318,3 +402,76 @@ class TorchRenderer:
             pairs = self._bin(splats, cam).pairs
             self._seconds_per_pixel_pair = elapsed / max(1, pairs * self.tile * self.tile)
         return self._seconds_per_pixel_pair
+
+
+# Fisher helpers -------------------------------------------------------------------------
+
+
+def projection_jacobians(
+    splats: SceneTensors, camera: Camera, ids: Tensor
+) -> tuple[Tensor, Tensor]:
+    """Derivatives of each splat's screen mean and conic, for the splats ``ids``.
+
+    Returns ``(M, 2, 6)`` and ``(M, 3, 6)``: d(means2d)/dθ and d(conic)/dθ, with
+    θ the world-space mean then the log-scale (:data:`FISHER_PARAMS`). Each
+    splat's projection depends only on its own parameters, so one forward-mode
+    pass per parameter, with the same unit tangent for every splat, gives every
+    splat's partial derivatives at once.
+    """
+    sub = SceneTensors(
+        means=splats.means[ids],
+        scales=splats.scales[ids],
+        quats=splats.quats[ids],
+        opacities=splats.opacities[ids],
+        sh=splats.sh[ids, :1],
+    )
+    log_scales = torch.log(sub.scales)
+
+    def screen(means: Tensor, log_s: Tensor) -> tuple[Tensor, Tensor]:
+        proj = project(replace(sub, means=means, scales=torch.exp(log_s)), camera)
+        return proj.means2d, proj.conics
+
+    d_mean2d, d_conic = [], []
+    for k in range(6):
+        t_mean = torch.zeros_like(sub.means)
+        t_scale = torch.zeros_like(log_scales)
+        (t_mean if k < 3 else t_scale)[:, k % 3] = 1.0
+        with warnings.catch_warnings():
+            # torch.func's first use scripts a helper internally, and PyTorch
+            # warns that torch.jit.script is deprecated; nothing for users to act on.
+            warnings.filterwarnings("ignore", "`torch.jit.script` is deprecated", FutureWarning)
+            tangents = torch.func.jvp(screen, (sub.means, log_scales), (t_mean, t_scale))[1]
+        dm, dc = tangents
+        d_mean2d.append(dm)
+        d_conic.append(dc)
+    return torch.stack(d_mean2d, dim=-1), torch.stack(d_conic, dim=-1)
+
+
+def _alpha_param_grads(
+    alpha: Tensor,
+    trans: Tensor,
+    conics: Tensor,
+    means2d: Tensor,
+    pix: Tensor,
+    jac_mean2d: Tensor,
+    jac_conic: Tensor,
+    alpha_max: float,
+) -> Tensor:
+    """``T · dα/dθ`` for each splat and pixel, ``(K, P, 6)``.
+
+    The direct term only: transmittance in front of the splat is held fixed,
+    and how a change to this splat would dim the splats behind it is left out
+    (docs/baselines.md, ``pup-simple``). Where alpha was skipped, clamped at
+    ``alpha_max`` or not composited, the derivative is zero, as it is in the
+    rasteriser's backward pass.
+    """
+    d = means2d[:, None, :] - pix[None, :, :]
+    dx, dy = d[..., 0], d[..., 1]
+    a, b, c = conics[:, 0:1], conics[:, 1:2], conics[:, 2:3]
+    # alpha = o · exp(-q), q = (a dx² + c dy²) / 2 + b dx dy, dx = mean_x - pixel_x.
+    s = alpha * trans * (alpha < alpha_max)
+    g_mean2d = -s[..., None] * torch.stack([a * dx + b * dy, b * dx + c * dy], dim=-1)
+    g_conic = -s[..., None] * torch.stack([0.5 * dx * dx, dx * dy, 0.5 * dy * dy], dim=-1)
+    return torch.einsum("kpi,kij->kpj", g_mean2d, jac_mean2d) + torch.einsum(
+        "kpi,kij->kpj", g_conic, jac_conic
+    )

@@ -4,6 +4,11 @@
 over a camera set and returns :class:`~psplat.io.weights.Weights`. Footprints
 and visibility come from the shared projection, so they are identical
 whichever backend computed the contributions.
+
+Besides ``contribution``, which is always computed, three terms gather the
+per-splat statistics that the baseline importance scores need
+(:mod:`psplat.analyze.scores_baseline`): ``hits``, ``top`` and ``fisher``.
+``baselines`` is shorthand for all of them.
 """
 
 from __future__ import annotations
@@ -19,10 +24,13 @@ from numpy.typing import NDArray
 from psplat.io.cameras import Camera
 from psplat.io.scene import Scene
 from psplat.io.weights import Weights
-from psplat.render.base import ProgressFn, Renderer
+from psplat.render.base import BackendUnavailable, ProgressFn, Renderer
 from psplat.render.project import SceneTensors, project
 
-SUPPORTED_TERMS = ("contribution",)
+SUPPORTED_TERMS = ("contribution", "hits", "top", "fisher")
+# Each extra term and the backend statistic that provides it.
+TERM_STATISTICS = {"hits": "hit_transmittance", "top": "top_count", "fisher": "fisher"}
+ALIASES = {"baselines": SUPPORTED_TERMS}
 ISSUES = "https://github.com/zach/psplat/issues/"
 # Terms that are specified but not written yet, and the issue tracking each.
 PLANNED_TERMS = {"csf": 32, "masking": 33, "saliency": 34}
@@ -33,10 +41,17 @@ class TermUnavailable(ValueError):
 
 
 def check_terms(terms: Sequence[str]) -> list[str]:
-    out = []
+    """Validate requested terms; returns them deduplicated, in canonical order.
+
+    ``contribution`` is always included, because every other term and score
+    builds on it.
+    """
+    out = ["contribution"]
     for term in terms:
         term = term.strip()
-        if term in SUPPORTED_TERMS:
+        if term in ALIASES:
+            out.extend(ALIASES[term])
+        elif term in SUPPORTED_TERMS:
             out.append(term)
         elif term in PLANNED_TERMS:
             raise TermUnavailable(
@@ -44,11 +59,11 @@ def check_terms(terms: Sequence[str]) -> list[str]:
                 f"{ISSUES}{PLANNED_TERMS[term]}"
             )
         else:
-            known = ", ".join((*SUPPORTED_TERMS, *PLANNED_TERMS))
+            known = ", ".join((*SUPPORTED_TERMS, *ALIASES, *PLANNED_TERMS))
             raise TermUnavailable(f"unknown term {term!r}; known terms: {known}")
-    if not out:
+    if not any(t.strip() for t in terms):
         raise TermUnavailable("at least one term is required")
-    return out
+    return [t for t in SUPPORTED_TERMS if t in out]
 
 
 def footprints(
@@ -82,8 +97,21 @@ def analyze(
 ) -> Weights:
     """Compute the requested per-splat, per-view terms."""
     active = check_terms(terms)
+    wanted = [TERM_STATISTICS[t] for t in active if t in TERM_STATISTICS]
     start = time.perf_counter()
-    contrib = renderer.contributions(scene, cameras, progress=progress)
+    extra: dict[str, NDArray[Any]] = {}
+    if wanted:
+        statistics = getattr(renderer, "statistics", None)
+        if statistics is None:
+            names = ", ".join(t for t in active if t in TERM_STATISTICS)
+            raise BackendUnavailable(
+                f"the {renderer.name} backend cannot compute the {names} term(s); "
+                "use --backend torch"
+            )
+        extra = statistics(scene, cameras, wanted, progress=progress)
+        contrib = extra.pop("contribution")
+    else:
+        contrib = renderer.contributions(scene, cameras, progress=progress)
     sigma, minor, major, visible = footprints(scene, cameras)
     meta: dict[str, Any] = {
         "terms": active,
@@ -103,4 +131,5 @@ def analyze(
         visible=visible,
         view_names=[c.name for c in cameras],
         meta=meta,
+        **extra,
     )
