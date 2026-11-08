@@ -130,6 +130,10 @@ jobs:
           & $psplat analyze tests\fixtures\synthetic\scene.ply --cameras tests\fixtures\synthetic\cams.json --backend torch --views all --out $env:RUNNER_TEMP\fixture.weights.npz
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path $env:RUNNER_TEMP\fixture.weights.npz)) { throw "no weights written" }
+          & $psplat order tests\fixtures\synthetic\scene.ply $env:RUNNER_TEMP\fixture.weights.npz --out $env:RUNNER_TEMP\ordered\scene.ordered.ply
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # The manifest schema ships inside the wheel; order validated against it.
+          if (-not (Test-Path $env:RUNNER_TEMP\ordered\scene.psplat.json)) { throw "no manifest written" }
       - name: Check the doc runner catches failures under PowerShell 5.1
         shell: powershell
         run: |

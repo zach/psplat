@@ -119,3 +119,26 @@ GPU path. SH degree 0 SOG and every other format here need no GPU.
 5. **The splat-transform version is pinned**, and an interop test asserts the
    behaviour above, so an upstream change to its writers fails CI instead of
    quietly breaking truncation.
+
+## The manifest, `scene.psplat.json`
+
+`psplat order` writes the manifest next to the ordered PLY. Its schema is
+`psplat/io/manifest.schema.json` (JSON Schema 2020-12), `version: 1`, as in
+handoff §3.4. It is frozen at the end of P1: any later change bumps
+`version`.
+
+Engines need only `cuts[].index`, the number of leading splats in each
+budget. Everything else is there for reports and reproducibility:
+
+| Field | Meaning |
+|---|---|
+| `source_sha256` | SHA-256 of the unordered input PLY |
+| `count` | splats in the ordered file |
+| `ordering` | `method`, the analysis `terms` it read, and `seed` for sampled methods; later `ppd` and `params` |
+| `cuts[]` | `frac` in (0, 1], strictly increasing, ending at 1; `index` never decreasing, at most `count`; `pack` and `eval` add `bytes_<format>` and metric values per cut |
+| `lod` | projected-size thresholds, from `psplat lod` (P3.3) |
+| `provenance` | tool version, git state, hardware, date, and the backend and weights file the order came from |
+
+A cut's `index` is `round(count · percent / 100)`, at least 1 for a non-empty
+scene. That is the same rule the banded SOG layout uses for its band edges,
+so every cut is also an exact prefix of a banded SOG.

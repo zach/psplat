@@ -6,8 +6,8 @@ Gaussian Splat scene once, then orders its splats so that the first N are
 the best-looking N. Any engine can then truncate the file at whatever
 budget it has, the way an MP3 decoder plays whatever bitrate it gets.
 
-**Status: pre-alpha.** `psplat analyze` works on any machine today.
-Ordering, packing, the web viewer and the Unreal Engine sample are next;
+**Status: pre-alpha.** `psplat analyze` and `psplat order` work on any
+machine today. Packing, the web viewer and the Unreal Engine sample are next;
 [`docs/plan.md`](docs/plan.md) has the roadmap and
 [issues](https://github.com/zach/psplat/issues) track each piece.
 
@@ -80,6 +80,31 @@ psplat cameras path\to\garden\sparse\0 --downscale 4 --out cams.json
 Mip-NeRF 360 `images_4` folders. psplat refuses cameras with lens distortion
 unless you undistort them first, because the result would silently be wrong.
 
+## Order the splats
+
+```bash
+psplat order scene.ply scene.weights.npz
+```
+
+```powershell
+psplat order scene.ply scene.weights.npz
+```
+
+This writes two files next to the scene:
+
+- `scene.ordered.ply`, the same splats with the most important first. Any
+  tool that reads splat PLY files can open it, and keeping only its first N
+  splats gives the best N.
+- `scene.psplat.json`, the manifest. Its `cuts` list says how many leading
+  splats make up each budget: 5, 10, 25, 50, 75 and 100% by default, or
+  your own with `--cuts 10,20,40`. An engine needs nothing else from it.
+
+Today splats are ranked by how much each one contributes to the analysed
+views. The perceptual ordering that psplat is named for comes in a later
+release ([#35](https://github.com/zach/psplat/issues/35)). `--method` also
+offers the pruning methods it will be compared against; see
+[`docs/baselines.md`](docs/baselines.md).
+
 ## Commands
 
 `psplat --help` lists every command. Those not built yet say so and link to
@@ -89,7 +114,7 @@ the issue that tracks them.
 |---|---|---|
 | `analyze` | per-splat contribution to every view | works |
 | `cameras` | converts COLMAP or nerfstudio cameras to `cams.json` | works |
-| `order` | sorts splats and writes cut points | next |
+| `order` | sorts splats best first and writes the cut-point manifest | works |
 | `pack` | writes PLY, SOG, SPZ or glTF | next |
 | `viewer` | web viewer with a budget slider | next |
 | `eval`, `lod`, `bench`, `report`, `study` | evaluation and experiments | later |

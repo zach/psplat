@@ -142,10 +142,113 @@ def analyze(
     typer.echo(f"wrote {target} ({weights.meta['wall_seconds']:.1f} s)")
 
 
-@app.command(context_settings=_STUB)
-def order() -> None:
-    """Sort splats by weight and emit cut points plus the manifest."""
-    _not_yet("order", 21)
+@app.command()
+def order(
+    scene_path: Path = typer.Argument(..., metavar="SCENE.PLY", help="Trained splat scene."),
+    weights_path: Path | None = typer.Argument(
+        None,
+        metavar="[WEIGHTS.NPZ]",
+        help="From psplat analyze. Default: SCENE.weights.npz next to the scene.",
+    ),
+    method: str = typer.Option(
+        "contribution",
+        help="Score to sort by: opacity, contribution, lightgaussian, pup-simple, "
+        "coreset-simple or minisplatting-simple. See docs/baselines.md.",
+    ),
+    cuts: str = typer.Option("5,10,25,50,75,100", help="Budgets in percent; 100 is always added."),
+    seed: int = typer.Option(0, help="Random seed for the sampled methods."),
+    out: Path | None = typer.Option(
+        None, "--out", "-o", help="Ordered PLY. Default: SCENE.ordered.ply next to the scene."
+    ),
+    manifest_path: Path | None = typer.Option(
+        None, "--manifest", help="Default: SCENE.psplat.json next to the ordered PLY."
+    ),
+) -> None:
+    """Sort splats best first; write the ordered PLY and its cut-point manifest."""
+    from psplat.analyze.scores_baseline import BASELINES, MissingStatistic, score
+    from psplat.io import manifest as mf
+    from psplat.io.ply import PlyFormatError, read_ply, write_ply
+    from psplat.io.weights import Weights, WeightsFormatError
+    from psplat.order.order import apply_order, sort_order
+    from psplat.provenance import collect, sha256_file
+
+    if method not in BASELINES:
+        _fail(f"unknown --method {method!r}; choose from {', '.join(BASELINES)}")
+    baseline = BASELINES[method]
+    try:
+        cut_list = [float(c) for c in cuts.split(",") if c.strip()]
+        mf.cuts_for(1, cut_list)
+    except ValueError:
+        _fail(f"--cuts must be percentages in (0, 100], comma-separated; got {cuts!r}")
+
+    try:
+        scene = read_ply(scene_path)
+    except (PlyFormatError, OSError) as exc:
+        _fail(str(exc))
+    source_sha = sha256_file(scene_path)
+
+    weights = None
+    weights_sha = None
+    if baseline.needs:
+        weights_path = weights_path or scene_path.with_name(scene_path.stem + ".weights.npz")
+        if not weights_path.exists():
+            _fail(
+                f"{weights_path} not found. --method {method} needs the output of "
+                f"psplat analyze; run it first, or pass the weights file after the scene"
+            )
+        try:
+            weights = Weights.load(weights_path)
+        except (WeightsFormatError, OSError, ValueError) as exc:
+            _fail(str(exc))
+        analysed = weights.meta.get("provenance", {}).get("source", {}).get("sha256")
+        if analysed is not None and analysed != source_sha:
+            _fail(
+                f"{weights_path} was computed from a different PLY than {scene_path} "
+                "(SHA-256 differs); rerun psplat analyze on this scene"
+            )
+        weights_sha = sha256_file(weights_path)
+
+    try:
+        scores = score(method, scene, weights, seed=seed)
+        permutation = sort_order(scores)
+    except (MissingStatistic, ValueError) as exc:
+        _fail(str(exc))
+
+    target = out or scene_path.with_name(scene_path.stem + ".ordered.ply")
+    if target.resolve() == scene_path.resolve():
+        _fail("--out must differ from the input scene")
+    manifest_target = manifest_path or target.with_name(scene_path.stem + ".psplat.json")
+    provenance = collect(
+        command="order",
+        args={"scene": str(scene_path), "weights": str(weights_path) if weights else None,
+              "method": method, "cuts": cut_list, "seed": seed},
+    )  # fmt: skip
+    provenance["date"] = provenance["created_utc"]
+    if weights is not None:
+        provenance["backend"] = str(weights.meta.get("backend_detail", weights.meta.get("backend")))
+        provenance["analysis"] = {
+            "weights_sha256": weights_sha,
+            **{k: weights.meta[k] for k in ("terms", "views", "wall_seconds") if k in weights.meta},
+        }
+    manifest = mf.build(
+        source_sha256=source_sha,
+        count=scene.count,
+        method=method,
+        terms=list(baseline.needs),
+        cuts_percent=cut_list,
+        provenance=provenance,
+        seed=seed if baseline.sampled else None,
+    )
+    try:
+        for path in (target, manifest_target):
+            path.parent.mkdir(parents=True, exist_ok=True)
+        write_ply(apply_order(scene, permutation), target)
+        mf.write(manifest, manifest_target)
+    except OSError as exc:
+        _fail(f"could not write output: {exc}")
+    budgets = ", ".join(f"{c['frac']:.0%} {c['index']:,}" for c in manifest["cuts"])
+    typer.echo(f"wrote {target} ({scene.count:,} splats by {method})")
+    typer.echo(f"wrote {manifest_target} (cuts: {budgets})")
 
 
 @app.command(context_settings=_STUB)

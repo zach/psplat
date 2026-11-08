@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/zach/psplat/blob/main/psplat/io/manifest.schema.json",
+  "title": "psplat manifest (scene.psplat.json), version 1",
+  "description": "Written by psplat order next to an ordered splat file. Engines need only cuts[].index: render the first index splats. Everything else is for reports and reproducibility. Frozen at the end of P1; any change bumps version.",
+  "type": "object",
+  "required": ["version", "source_sha256", "count", "ordering", "cuts", "provenance"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {"const": 1},
+    "source_sha256": {
+      "description": "SHA-256 of the unordered input PLY.",
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "count": {"description": "Splats in the ordered file.", "type": "integer", "minimum": 0},
+    "ordering": {
+      "type": "object",
+      "required": ["method", "terms"],
+      "additionalProperties": false,
+      "properties": {
+        "method": {
+          "description": "How splats were scored, e.g. contribution, lightgaussian, perceptual-v1.",
+          "type": "string",
+          "minLength": 1
+        },
+        "terms": {
+          "description": "Analysis terms the score read.",
+          "type": "array",
+          "items": {"type": "string", "minLength": 1},
+          "uniqueItems": true
+        },
+        "ppd": {"description": "Pixels per degree assumed by perceptual terms.", "type": "number", "exclusiveMinimum": 0},
+        "seed": {"description": "Random seed, for sampled orderings.", "type": "integer"},
+        "params": {"description": "Any other parameters of the method.", "type": "object"}
+      }
+    },
+    "cuts": {
+      "description": "Budgets, in increasing order. index is the number of leading splats in the budget.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["frac", "index"],
+        "additionalProperties": false,
+        "properties": {
+          "frac": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+          "index": {"type": "integer", "minimum": 0}
+        },
+        "patternProperties": {
+          "^bytes_[a-z0-9_]+$": {"description": "Size in bytes of this prefix in a packed format, e.g. bytes_sog.", "type": "integer", "minimum": 0},
+          "^(psnr|ssim|lpips|flip|cvvdp)$": {"description": "Quality of this prefix against the full scene.", "type": "number"}
+        }
+      }
+    },
+    "lod": {
+      "type": "object",
+      "properties": {
+        "projected_sigma_px_min": {"type": "array", "items": {"type": "number", "minimum": 0}}
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "required": ["tool"],
+      "properties": {
+        "tool": {"type": "string", "pattern": "^psplat "},
+        "backend": {"type": "string"},
+        "date": {"type": "string"}
+      }
+    }
+  }
+}
