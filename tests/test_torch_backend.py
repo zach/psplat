@@ -10,6 +10,7 @@ it also proves the oracle's culling drops nothing that would have rendered.
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass, replace
 
 import numpy as np
 import pytest
@@ -61,9 +62,16 @@ def random_scene(n: int, seed: int, degree: int = 1, opaque: bool = False) -> Sc
     )
 
 
-def naive_composite(
-    scene: Scene, cam: Camera, alpha_max: float = 0.999
-) -> tuple[np.ndarray, np.ndarray]:
+@dataclass
+class Naive:
+    contrib: np.ndarray  # (N,)
+    image: np.ndarray  # (H, W, 3)
+    hit_t: np.ndarray  # (N,) transmittance summed over composited pixels
+    top: np.ndarray  # (N,) pixels where the splat deposited the largest weight
+    composited: dict[int, list[tuple[int, int, float]]]  # splat -> [(row, col, T before)]
+
+
+def naive_pass(scene: Scene, cam: Camera, alpha_max: float = 0.999) -> Naive:
     """Per-pixel front-to-back loop, exactly as gsplat's forward kernel runs it."""
     s = SceneTensors.from_scene(scene, "cpu", F64)
     proj = project(s, cam)
@@ -72,12 +80,15 @@ def naive_composite(
     colours = (eval_sh(s.sh, s.means - torch.as_tensor(cam.position)) + 0.5).clamp_min(0)
     m2d, con, opa = proj.means2d.numpy(), proj.conics.numpy(), proj.opacities.numpy()
     col = colours.numpy()
-    contrib = np.zeros(scene.count)
-    image = np.zeros((cam.height, cam.width, 3))
+    out = Naive(
+        np.zeros(scene.count), np.zeros((cam.height, cam.width, 3)), np.zeros(scene.count),
+        np.zeros(scene.count, np.int64), {},
+    )  # fmt: skip
     for i in range(cam.height):
         for j in range(cam.width):
             px, py = j + 0.5, i + 0.5
             t = 1.0
+            best, best_w = -1, 0.0
             for g in order:
                 dx, dy = m2d[g, 0] - px, m2d[g, 1] - py
                 sigma = 0.5 * (con[g, 0] * dx * dx + con[g, 2] * dy * dy) + con[g, 1] * dx * dy
@@ -87,10 +98,66 @@ def naive_composite(
                 next_t = t * (1 - alpha)
                 if next_t <= 1e-4:
                     break
-                contrib[g] += alpha * t
-                image[i, j] += col[g] * alpha * t
+                out.contrib[g] += alpha * t
+                out.image[i, j] += col[g] * alpha * t
+                out.hit_t[g] += t
+                out.composited.setdefault(g, []).append((i, j, t))
+                if alpha * t > best_w:
+                    best, best_w = g, alpha * t
                 t = next_t
-    return contrib, image
+            if best >= 0:
+                out.top[best] += 1
+    return out
+
+
+def naive_composite(
+    scene: Scene, cam: Camera, alpha_max: float = 0.999
+) -> tuple[np.ndarray, np.ndarray]:
+    result = naive_pass(scene, cam, alpha_max)
+    return result.contrib, result.image
+
+
+def finite_difference_fisher(
+    scene: Scene, cam: Camera, naive: Naive, h: float = 1e-6
+) -> np.ndarray:
+    """PUP's direct-term Fisher block by central differences, ``(N, 6, 6)``.
+
+    For each splat, perturb its mean and log-scale, re-project, and difference
+    the alpha ``min(0.999, o · exp(-q))`` at the pixels where the naive loop
+    composited it, weighted by the transmittance in front of it there. This
+    shares nothing with the backend's chain rule or forward-mode Jacobians.
+    """
+    fisher = np.zeros((scene.count, 6, 6))
+    for g, entries in naive.composited.items():
+        rows = np.array([e[0] for e in entries])
+        cols = np.array([e[1] for e in entries])
+        trans = np.array([e[2] for e in entries])
+        pix = torch.as_tensor(np.stack([cols + 0.5, rows + 0.5], -1), dtype=F64)
+
+        base = SceneTensors.from_scene(scene.take(np.array([g])), "cpu", F64)
+
+        def alpha_at(
+            theta: np.ndarray, base: SceneTensors = base, pix: torch.Tensor = pix
+        ) -> np.ndarray:
+            # Perturb in float64: Scene's own activation rounds to float32.
+            step = torch.as_tensor(theta, dtype=F64)
+            one = replace(
+                base, means=base.means + step[:3], scales=base.scales * torch.exp(step[3:])
+            )
+            p = project(one, cam)
+            d = p.means2d[0] - pix
+            c = p.conics[0]
+            q = 0.5 * (c[0] * d[:, 0] ** 2 + c[2] * d[:, 1] ** 2) + c[1] * d[:, 0] * d[:, 1]
+            return (p.opacities[0] * torch.exp(-q)).clamp_max(0.999).numpy()
+
+        grads = np.zeros((len(entries), 6))
+        for k in range(6):
+            e = np.zeros(6)
+            e[k] = h
+            grads[:, k] = (alpha_at(e) - alpha_at(-e)) / (2 * h)
+        grads *= trans[:, None]
+        fisher[g] = grads.T @ grads
+    return fisher
 
 
 # Agreement with the literal per-pixel loop -------------------------------------------
@@ -258,3 +325,71 @@ def test_psplat_device_overrides_automatic_choice(monkeypatch: pytest.MonkeyPatc
     assert tb.default_device() == torch.device("cpu")
     assert TorchRenderer().describe() == "torch on cpu"
     tb.default_device.cache_clear()
+
+
+# Baseline statistics (P1.1) ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("seed", "opaque"), [(0, False), (2, True)])
+def test_statistics_match_naive_per_pixel_loop(seed: int, opaque: bool) -> None:
+    scene = random_scene(60 if opaque else 40, seed, opaque=opaque)
+    cam = camera()
+    want = naive_pass(scene, cam)
+    oracle = TorchRenderer("cpu", dtype=F64)
+    got = oracle.statistics(scene, [cam], tb.STATISTICS)
+    assert got["top_count"].dtype == np.int64
+    np.testing.assert_allclose(got["contribution"][:, 0], want.contrib, rtol=1e-6)
+    np.testing.assert_allclose(got["hit_transmittance"], want.hit_t, rtol=1e-6, atol=1e-9)
+    np.testing.assert_array_equal(got["top_count"], want.top)
+    assert want.top.sum() > 0.3 * cam.width * cam.height
+    fd = finite_difference_fisher(scene, cam, want)
+    scale = np.abs(fd).max(axis=(1, 2), keepdims=True) + 1e-30
+    np.testing.assert_allclose(got["fisher"] / scale, fd / scale, atol=2e-5)
+    assert np.abs(fd).max() > 0
+
+
+def test_fisher_is_zero_where_alpha_is_capped() -> None:
+    # Alpha reaches the 0.999 cap only within about 0.045σ of the centre, so
+    # zoom in until that disc covers dozens of pixels.
+    scene = scene_of([[0.0, 0.3, 0.1]], [1.0], [0.99999])
+    cam = Camera("zoom", 40, 30, 400.0, 400.0, 20.0, 15.0, look_at((0, -4, 0), (0, 0, 0)))
+    want = naive_pass(scene, cam)
+    capped = TorchRenderer("cpu", dtype=F64).render(scene, cam).alpha >= 0.999 - 1e-9
+    assert capped.sum() > 20
+    got = TorchRenderer("cpu", dtype=F64).statistics(scene, [cam], ["fisher"])["fisher"]
+    fd = finite_difference_fisher(scene, cam, want)
+    np.testing.assert_allclose(got, fd, rtol=1e-5, atol=1e-9 * np.abs(fd).max())
+
+
+def test_statistics_survive_small_tiles_and_chunks(monkeypatch: pytest.MonkeyPatch) -> None:
+    scene = random_scene(60, 7, opaque=True)
+    cam = camera(37, 29)
+    ref = TorchRenderer("cpu", dtype=F64).statistics(scene, [cam], tb.STATISTICS)
+    monkeypatch.setattr(tb, "CHUNK", 3)
+    small = TorchRenderer("cpu", dtype=F64, tile=5).statistics(scene, [cam], tb.STATISTICS)
+    for name in tb.STATISTICS:
+        np.testing.assert_allclose(small[name], ref[name], rtol=1e-6, atol=1e-9, err_msg=name)
+
+
+def test_statistics_sum_over_views_and_the_nearer_copy_wins_top() -> None:
+    # Two identical splats at the same place: equal depth, so the stable sort
+    # keeps index order; the second sees T = 1 - α, so the first is always the
+    # larger contributor.
+    scene = scene_of([[0, 0, 0], [0, 0, 0]], [0.2, 0.2], [0.02, 0.02])
+    cams = [camera(), camera(eye=(4.0, 0.0, 0.0))]
+    oracle = TorchRenderer("cpu", dtype=F64)
+    both = oracle.statistics(scene, cams, tb.STATISTICS)
+    each = [oracle.statistics(scene, [c], tb.STATISTICS) for c in cams]
+    for name in tb.STATISTICS:
+        np.testing.assert_allclose(
+            both[name], each[0][name] + each[1][name], rtol=1e-6, atol=1e-12, err_msg=name
+        )
+    assert both["top_count"][0] > 0 and both["top_count"][1] == 0
+    # Low opacity: the copy behind sees T ≈ 1 - 0.02, so each takes about half.
+    total = both["contribution"].sum()
+    np.testing.assert_allclose(both["contribution"].sum(1) / total, [0.5, 0.5], atol=0.01)
+
+
+def test_unknown_statistic_is_rejected() -> None:
+    with pytest.raises(ValueError, match="unknown statistics"):
+        TorchRenderer("cpu").statistics(scene_of([[0, 0, 0]], [0.1], [0.5]), [camera()], ["x"])

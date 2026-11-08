@@ -39,6 +39,13 @@ Footprints and visibility do not come from backends. They come from the
 shared projection in `psplat/render/project.py`, so they mean the same thing
 whichever backend computed the contributions.
 
+A backend may also implement `statistics(scene, cameras, stats, progress)`,
+which returns the contribution plus per-splat statistics the baseline scores
+need: transmittance over composited pixels, top-contributor counts, and a
+Fisher block. It is optional; `psplat analyze` asks for it only for the
+`hits`, `top` and `fisher` terms. Only the torch backend has it so far.
+`docs/baselines.md` defines each statistic.
+
 ## Rasteriser conventions
 
 The torch backend transcribes gsplat's classic 3DGS rasteriser. The

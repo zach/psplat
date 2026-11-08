@@ -74,7 +74,11 @@ def analyze(
     views: str = typer.Option(
         "train", help="train, eval, all, or a number of evenly spaced views."
     ),
-    terms: str = typer.Option("contribution", help="Comma-separated analysis terms."),
+    terms: str = typer.Option(
+        "contribution",
+        help="Comma-separated analysis terms: contribution (always computed), hits, top, "
+        "fisher, or baselines for all four. See docs/baselines.md.",
+    ),
     out: Path | None = typer.Option(
         None, "--out", "-o", help="Output file. Default: SCENE.weights.npz next to the scene."
     ),

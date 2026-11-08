@@ -10,6 +10,12 @@ framework a backend uses internally. Each backend provides two things:
 
 Screen-space footprints and visibility come from :mod:`psplat.render.project`,
 not from backends, so they mean the same thing whichever backend ran.
+
+A backend may also offer ``statistics(scene, cameras, stats, progress)``,
+returning the contribution plus the per-splat statistics the baseline scores
+need (see :data:`psplat.render.torch_backend.STATISTICS`). It is optional:
+:func:`psplat.analyze.contribution.analyze` asks for it only when such a term
+is requested, and says which backend to use when it is missing.
 """
 
 from __future__ import annotations
