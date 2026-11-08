@@ -120,6 +120,50 @@ GPU path. SH degree 0 SOG and every other format here need no GPU.
    behaviour above, so an upstream change to its writers fails CI instead of
    quietly breaking truncation.
 
+## How `psplat pack` applies D7
+
+`psplat pack` (P1.3, [#22](https://github.com/zach/psplat/issues/22)) writes
+the ordered PLY itself and runs splat-transform 3.10.3 under Node.js for the
+other formats. It installs that one pinned version with npm into psplat's
+cache folder, once.
+
+| Output | How | Order |
+|---|---|---|
+| `<stem>.ordered.ply` | a copy of the ordered PLY | exact |
+| `<stem>.spz`, `<stem>.glb` | splat-transform's command line | exact (both writers keep input order) |
+| `<stem>.sog` | `psplat/pack/write_sog.mjs`, the library's `writeSog` with `indices` | banded: the manifest's cuts are the band edges |
+
+For each format, each cut's prefix is also packed on its own, and its size
+is recorded in the manifest as `bytes_ply`, `bytes_sog`, `bytes_spz` or
+`bytes_glb`. That size is what a budget costs to ship, and the x-axis of a
+rate–quality curve. PLY sizes are computed exactly without writing anything.
+The other formats cost about 2.65 times one full write with the default
+cuts; `--no-cut-sizes` skips it.
+
+**The GPU is not used yet, so item 4 of D7 is met by its fallback alone.**
+splat-transform creates its WebGPU device inside its command-line bundle and
+does not export that code, and neither this repository's CI nor the dev
+container has a WebGPU adapter to test against. So:
+
+- SH degree 0: SOG as usual, no clustering needed.
+- Up to 32,768 splats (`SOG_CPU_LIMIT`): the SH palette is clustered on the CPU,
+  which takes seconds.
+- Above that: by default the SOG is written without SH bands 1–3, with a
+  notice; `--sog-sh keep` clusters on the CPU anyway, slowly, and
+  `--sog-sh drop` always drops them. PLY, SPZ and glTF always keep every
+  band.
+
+Wiring a GPU device into `write_sog.mjs` needs a machine with WebGPU (the Mac
+or the AWS instance) to verify; until then it is R14 in `docs/plan.md`.
+
+The opt-in interop tests (`PSPLAT_INTEROP=1`) pack a scene and read every
+output back with splat-transform. They check three things:
+
+- SPZ and glTF are in exact order;
+- the SOG's texel order is the banded order, so each cut's leading texels
+  are exactly the splats a PLY truncated there holds;
+- the SOG keeps or drops SH as asked.
+
 ## The manifest, `scene.psplat.json`
 
 `psplat order` writes the manifest next to the ordered PLY. Its schema is

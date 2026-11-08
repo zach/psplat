@@ -243,6 +243,8 @@ def order(
         for path in (target, manifest_target):
             path.parent.mkdir(parents=True, exist_ok=True)
         write_ply(apply_order(scene, permutation), target)
+        # pack checks it is given the very file this manifest describes.
+        manifest["provenance"]["output"] = {"ply": target.name, "ply_sha256": sha256_file(target)}
         mf.write(manifest, manifest_target)
     except OSError as exc:
         _fail(f"could not write output: {exc}")
@@ -251,10 +253,68 @@ def order(
     typer.echo(f"wrote {manifest_target} (cuts: {budgets})")
 
 
-@app.command(context_settings=_STUB)
-def pack() -> None:
-    """Write the ordered scene as PLY, SOG, SPZ or glTF, with per-cut byte sizes."""
-    _not_yet("pack", 22)
+@app.command()
+def pack(
+    ordered: Path = typer.Argument(
+        ..., metavar="SCENE.ORDERED.PLY", help="Ordered PLY from psplat order."
+    ),
+    ply: bool = typer.Option(False, "--ply", help="Ordered PLY: any prefix is a valid budget."),
+    sog: bool = typer.Option(False, "--sog", help="PlayCanvas SOG; budgets snap to cut points."),
+    spz: bool = typer.Option(False, "--spz", help="SPZ v4, in exact psplat order."),
+    gltf: bool = typer.Option(
+        False, "--gltf", help="glTF .glb with KHR_gaussian_splatting, in exact psplat order."
+    ),
+    out: Path | None = typer.Option(
+        None, "--out", "-o", help="Output folder. Default: dist next to the input."
+    ),
+    manifest_path: Path | None = typer.Option(
+        None, "--manifest", help="Default: SCENE.psplat.json next to the input."
+    ),
+    alloc: str = typer.Option("uniform", help="Attribute bit allocation; only uniform so far."),
+    cut_sizes: bool = typer.Option(
+        True, help="Pack each cut on its own to record its size in the manifest."
+    ),
+    sog_sh: str = typer.Option(
+        "auto",
+        help="SOG spherical harmonics: auto keeps them up to 32,768 splats, keep always "
+        "(slow on CPU), drop never.",
+    ),
+) -> None:
+    """Write the ordered scene as PLY, SOG, SPZ or glTF, with per-cut byte sizes.
+
+    Exits 3 if a requested format had to be skipped (for example, no Node.js).
+    """
+    from psplat.io.manifest import ManifestError
+    from psplat.io.ply import PlyFormatError
+    from psplat.pack.pack import PackError, output_stem
+    from psplat.pack.pack import pack as run_pack
+
+    formats = [f for f, on in (("ply", ply), ("sog", sog), ("spz", spz), ("gltf", gltf)) if on]
+    if not formats:
+        _fail("choose at least one format: --ply, --sog, --spz or --gltf")
+    if not ordered.exists():
+        _fail(f"{ordered} not found")
+    stem = output_stem(ordered)
+    manifest_in = manifest_path or ordered.with_name(f"{stem}.psplat.json")
+    if not manifest_in.exists():
+        _fail(f"{manifest_in} not found; psplat order writes it next to the ordered PLY")
+    target = out or ordered.parent / "dist"
+    try:
+        result = run_pack(
+            ordered, manifest_in, formats, target, alloc=alloc, cut_sizes=cut_sizes,
+            sog_sh=sog_sh, log=lambda m: typer.echo(m, err=True),
+        )  # fmt: skip
+    except (PackError, ManifestError, PlyFormatError, OSError, RuntimeError) as exc:
+        _fail(str(exc))
+    for notice in result.notices:
+        typer.echo(f"note: {notice}", err=True)
+    for path in result.outputs.values():
+        typer.echo(f"wrote {path} ({path.stat().st_size:,} bytes)")
+    typer.echo(f"wrote {result.manifest_path}")
+    if result.skipped:
+        for fmt, reason in result.skipped.items():
+            typer.echo(f"skipped {fmt}: {reason}", err=True)
+        raise typer.Exit(code=3)
 
 
 @app.command(context_settings=_STUB)

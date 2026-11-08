@@ -213,3 +213,48 @@ Silicon, so the msplat import check is unchanged.
   of tie-breaking needed 200k tied scores to catch an unstable sort.
 
 **Next:** P1.3 `pack` (#22), with the banded SOG writer from the spike.
+
+---
+
+## 2026-11-08 (later) — P1.3 pack
+
+**What ran:** #55 (P1.1) and #56 (P1.2) merged; P1.3 `psplat pack`
+implemented in the remote container.
+
+**Results:**
+
+- **What pack writes:** the ordered PLY, SOG (banded order), SPZ v4 and
+  glTF `.glb`, plus the manifest with `bytes_<format>` for every cut.
+  PLY prefix sizes are computed exactly. For the other formats, each cut's
+  prefix is packed on its own and measured.
+- **Interop checks:** packing a real grid scene through splat-transform
+  3.10.3 and reading every output back confirms:
+  - SPZ and glTF are in exact order;
+  - the SOG's texels are in exactly the banded order, so each cut's leading
+    texels are the same splats as the PLY truncated there;
+  - SOG keeps SH at degree 1 and drops it when asked.
+- **Without Node.js**, pack writes the PLY, names what it skipped and why,
+  and exits 3. Windows CI checks this with Node removed from PATH, then
+  packs every format with it.
+- **Fixture timing:** 200 splats, all four formats with cut sizes, took
+  about 10 s on this CPU, most of it SOG's SH clustering.
+
+**Findings:**
+
+- splat-transform's WebGPU device code lives in its CLI bundle and is not
+  exported from the library. Driving the GPU from `write_sog.mjs` would mean
+  copying that code, its DOM shims and the PlayCanvas engine version it
+  bundles. It could not be verified anywhere available (no WebGPU adapter
+  in the container or on GitHub runners). So SOG keeps SH only up to
+  32,768 splats by default, and drops it above that with a notice. R14
+  stays open until a GPU machine can verify a GPU path.
+- **SOG output is not byte-deterministic:** the same input gave 26,809 and
+  26,867 bytes in two runs, presumably from the SH clustering's random
+  start. So `bytes_sog` varies by a fraction of a percent between runs, and
+  tests do not compare SOG bytes.
+
+**Not done, and why:** "outputs open in SuperSplat" is a manual check on the
+Mac.
+
+**Next:** P1.4 gsplat backend (#23) needs the GPU box; P1.6 metrics and
+`psplat eval` (#25) and P1.7 web viewer (#26) can proceed here.

@@ -134,6 +134,24 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           # The manifest schema ships inside the wheel; order validated against it.
           if (-not (Test-Path $env:RUNNER_TEMP\ordered\scene.psplat.json)) { throw "no manifest written" }
+          # pack without Node: PLY is written, SOG is skipped with a clear message, exit 3.
+          $savedPath = $env:PATH
+          for ($i = 0; ($found = Get-Command node -ErrorAction SilentlyContinue) -and $i -lt 10; $i++) {
+            $nodeDir = (Split-Path $found.Source).TrimEnd('\')
+            $env:PATH = ($env:PATH -split ';' | Where-Object { $_.TrimEnd('\') -ne $nodeDir }) -join ';'
+          }
+          if (Get-Command node -ErrorAction SilentlyContinue) { throw "node still on PATH" }
+          & $psplat pack $env:RUNNER_TEMP\ordered\scene.ordered.ply --ply --sog --out $env:RUNNER_TEMP\dist-nonode 2>&1 | Tee-Object -Variable packLog
+          if ($LASTEXITCODE -ne 3) { throw "expected exit 3 without Node, got $LASTEXITCODE" }
+          if (-not ($packLog -match 'skipped sog: Node.js was not found')) { throw "no skip message" }
+          if (-not (Test-Path $env:RUNNER_TEMP\dist-nonode\scene.ordered.ply)) { throw "PLY not written" }
+          $env:PATH = $savedPath
+          # With Node: every format.
+          & $psplat pack $env:RUNNER_TEMP\ordered\scene.ordered.ply --ply --sog --spz --gltf --out $env:RUNNER_TEMP\dist
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          foreach ($f in 'scene.ordered.ply', 'scene.sog', 'scene.spz', 'scene.glb', 'scene.psplat.json') {
+            if (-not (Test-Path $env:RUNNER_TEMP\dist\$f)) { throw "$f not written" }
+          }
       - name: Check the doc runner catches failures under PowerShell 5.1
         shell: powershell
         run: |

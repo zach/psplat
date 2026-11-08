@@ -6,8 +6,8 @@ Gaussian Splat scene once, then orders its splats so that the first N are
 the best-looking N. Any engine can then truncate the file at whatever
 budget it has, the way an MP3 decoder plays whatever bitrate it gets.
 
-**Status: pre-alpha.** `psplat analyze` and `psplat order` work on any
-machine today. Packing, the web viewer and the Unreal Engine sample are next;
+**Status: pre-alpha.** `psplat analyze`, `order` and `pack` work on any
+machine today. The web viewer and the Unreal Engine sample are next;
 [`docs/plan.md`](docs/plan.md) has the roadmap and
 [issues](https://github.com/zach/psplat/issues) track each piece.
 
@@ -17,6 +17,8 @@ machine today. Packing, the web viewer and the Unreal Engine sample are next;
 - A trained splat scene as a `.ply` file, from any trainer.
 - Its cameras, as a COLMAP model folder, a nerfstudio `transforms.json`, or
   psplat's own `cams.json`.
+- For SOG, SPZ or glTF output only: [Node.js](https://nodejs.org) LTS. PLY
+  output needs nothing extra.
 
 You do not need a GPU, a compiler, Docker, WSL, a Mac, or any cloud account.
 On Windows, see [`docs/windows.md`](docs/windows.md) for installing Python.
@@ -105,6 +107,38 @@ release ([#35](https://github.com/zach/psplat/issues/35)). `--method` also
 offers the pruning methods it will be compared against; see
 [`docs/baselines.md`](docs/baselines.md).
 
+## Pack it for an engine or the web
+
+```bash
+psplat pack scene.ordered.ply --ply --sog
+```
+
+```powershell
+psplat pack scene.ordered.ply --ply --sog
+```
+
+This writes a `dist` folder holding:
+
+- the ordered PLY, which Unreal and most tools import directly;
+- a SOG file, PlayCanvas's compressed format for the web viewer;
+- an updated `scene.psplat.json` that records how many bytes each budget
+  takes in each format.
+
+`--spz` and `--gltf` add those formats too.
+
+SOG, SPZ and glTF are written by PlayCanvas's splat-transform. That tool
+runs on Node.js, and psplat downloads it once, the first time you need it.
+Without Node.js, psplat still writes the PLY, says what it skipped and why,
+and exits with code 3.
+
+Inside a SOG file, splats are only grouped by budget: each budget is
+exactly the best splats, but order within a budget is not kept, so SOG
+budgets snap to the cut points. PLY, SPZ and glTF keep the exact order, so
+any splat count is a valid budget. SOG's view-dependent colour needs a GPU
+to compress on scenes over about 33,000 splats. Until psplat can use one,
+it writes those SOG files without it and tells you so;
+[`docs/formats.md`](docs/formats.md) explains why.
+
 ## Commands
 
 `psplat --help` lists every command. Those not built yet say so and link to
@@ -115,7 +149,7 @@ the issue that tracks them.
 | `analyze` | per-splat contribution to every view | works |
 | `cameras` | converts COLMAP or nerfstudio cameras to `cams.json` | works |
 | `order` | sorts splats best first and writes the cut-point manifest | works |
-| `pack` | writes PLY, SOG, SPZ or glTF | next |
+| `pack` | writes PLY, SOG, SPZ or glTF, with per-budget sizes | works |
 | `viewer` | web viewer with a budget slider | next |
 | `eval`, `lod`, `bench`, `report`, `study` | evaluation and experiments | later |
 

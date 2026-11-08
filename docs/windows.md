@@ -61,6 +61,24 @@ psplat analyze scene.ply --cameras cams.json --device cpu
 
 Paths may use either `\` or `/`. psplat handles both.
 
+## 4. Install Node.js, for SOG, SPZ and glTF
+
+Only `psplat pack --sog`, `--spz` and `--gltf` need Node.js; `--ply` does
+not. Install the LTS release from nodejs.org with the default options, which
+add it to PATH, then open a new PowerShell window and check:
+
+```bash
+node --version
+```
+
+```powershell
+node --version
+```
+
+The first time you pack one of those formats, psplat uses npm to download
+PlayCanvas splat-transform once, into `%LOCALAPPDATA%\psplat\cache`. It
+needs no administrator rights.
+
 ## Using an NVIDIA GPU
 
 **Not yet available, and not yet verified on a Windows NVIDIA machine.**
