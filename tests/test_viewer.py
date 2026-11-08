@@ -173,11 +173,13 @@ needs_browser = pytest.mark.skipif(
 
 
 def drive(url: str) -> dict[str, Any]:
-    out = subprocess.run(["node", str(CHECK_SCRIPT), url], capture_output=True, text=True,
-                         check=True, timeout=300)  # fmt: skip
+    # The full Chromium build, not the headless shell: only a full browser
+    # fetches /favicon.ico, which is how a 404 slipped past these tests once.
+    out = subprocess.run(["node", str(CHECK_SCRIPT), url, "--channel", "chromium"],
+                         capture_output=True, text=True, check=True, timeout=300)  # fmt: skip
     report: dict[str, Any] = json.loads(out.stdout)
     assert report.get("error") is None, report.get("error")
-    assert not [line for line in report["logs"] if line.startswith(("error", "pageerror"))]
+    assert not [line for line in report["logs"] if line.startswith(("error", "pageerror", "http "))]
     return report
 
 

@@ -32,6 +32,8 @@ const page = await browser.newPage({ viewport: { width: 640, height: 480 } });
 const logs = [];
 page.on('console', (m) => logs.push(`${m.type()}: ${m.text()}`));
 page.on('pageerror', (e) => logs.push(`pageerror: ${e.message}`));
+// Name the URL of any failed request; the console only says "Failed to load resource".
+page.on('response', (r) => { if (r.status() >= 400) logs.push(`http ${r.status()}: ${r.url()}`); });
 
 const report = { url, logs };
 try {
