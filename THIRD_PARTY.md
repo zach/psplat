@@ -40,6 +40,13 @@ vendors, with its licence. Update it in the same PR that adds the dependency.
 | hatchling | MIT |
 | types-PyYAML, types-jsonschema (typeshed stubs) | Apache-2.0 |
 | scikit-image | BSD-3-Clause |
+| Playwright (Node, CI only; drives the viewer in Chromium and Edge) | Apache-2.0 |
+
+## Vendored
+
+| Component | Licence | Where | Used for |
+|---|---|---|---|
+| PlayCanvas Engine 2.23.3 (`playcanvas.min.mjs`, unmodified) | MIT | `engines/web/vendor/`, shipped in the wheel as `psplat/_web/vendor/` with its LICENSE beside it | the web viewer (`psplat viewer`) |
 
 ## Invoked as external processes, never imported
 

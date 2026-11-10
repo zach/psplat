@@ -609,10 +609,50 @@ def study() -> None:
     _not_yet("study", 44)
 
 
-@app.command(context_settings=_STUB)
-def viewer() -> None:
-    """Open the web viewer with a budget slider."""
-    _not_yet("viewer", 26)
+@app.command()
+def viewer(
+    scene_path: Path = typer.Argument(
+        ..., metavar="SCENE", help="A .sog or .ply from psplat pack, or the folder holding it."
+    ),
+    manifest_path: Path | None = typer.Option(
+        None, "--manifest", help="Default: SCENE.psplat.json beside the scene, if present."
+    ),
+    cameras: Path | None = typer.Option(
+        None, "--cameras", "-c", help="cams.json for the view list. Default: found nearby."
+    ),
+    budget: str | None = typer.Option(
+        None, help="Start at this budget: a fraction such as 0.25, or a splat count."
+    ),
+    port: int = typer.Option(8642, help="Local port; 0 picks a free one."),
+    browser: bool = typer.Option(True, help="Open the default browser."),
+) -> None:
+    """Open the web viewer with a budget slider; serves on this machine only."""
+    from psplat.viewer import ViewerError, open_browser, resolve, start
+
+    try:
+        served = resolve(scene_path, manifest_path, cameras)
+    except ViewerError as exc:
+        _fail(str(exc))
+    if budget is not None:
+        served.extra["budget"] = budget
+    try:
+        server = start(served, port=port, background=False)
+    except OSError as exc:
+        _fail(f"cannot listen on port {port} ({exc}); try --port 0")
+    parts = [served.scene.name]
+    parts.append(served.manifest.name if served.manifest else "no manifest")
+    if served.cameras:
+        parts.append(served.cameras.name)
+    typer.echo(f"serving {', '.join(parts)}")
+    typer.echo(f"open {server.url} in Chrome, Edge or Firefox; Ctrl+C stops the viewer")
+    if browser:
+        open_browser(server.url)
+    try:
+        server.httpd.serve_forever()
+    except KeyboardInterrupt:
+        typer.echo("stopped")
+    finally:
+        server.httpd.server_close()
 
 
 @app.command()
